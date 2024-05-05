@@ -1,28 +1,32 @@
 # Scaffold Scripting language for Arbgeom
-Still work in progress
+Still a work in progress
 
 ## Example:
 ```
-class Plane4D {
-    normal: Vec4,
-    Proj::proj(vector: Vec4) -> Vec4 {
-        vector - normal * dot(vector, normal)
+class Sphere4D {
+    radius: f32,
+    test(abc: f32, xyz: Mat4) -> bool {
+        // (((abc - 3) - (((2 / 8) / 3) * 2)) + 1)
+        abc - 3 - -2 / -8 / 3 * 2 + (-1) + !27 + Vec4(100, -4, 3 - x, .2)
     }
 }
 
-// sdihbdsiuchdsc
 class Shell {
     offset: f32,
-    shape: Any, /* abc */
-    Proj::proj(vector: Vec4) -> Vec4 {
-        let proj = shape.proj(vector);
+    shape: Any,
+    Proj::proj<shape: Proj>(vector: Vec4) -> Vec4 {
+        let proj: Vec4 = shape.proj(vector);
 
         proj + offset * normalize(vector - proj)
     }
 }
 
-// Syntax for combining manifolds TBD
-class Combo {
-    offset: f32,
+class ShellSphere {
+    radius: f32
+} => Shell {
+    offset: 3.0 - radius,
+    shape: Sphere4D {
+        radius
+    }
 }
 ```

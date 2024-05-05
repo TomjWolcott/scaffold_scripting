@@ -83,7 +83,8 @@ impl Display for Document {
 pub struct Class {
     name: String,
     fields: Vec<Binding>,
-    methods: Vec<Method>
+    methods: Vec<Method>,
+    instance: Option<Instance>
 }
 
 impl Parse for Class {
@@ -97,8 +98,17 @@ impl Parse for Class {
 
         assert_pairs!(pairs, 1..);
         let name = pairs.next().unwrap().as_str().to_string();
+        let mut instance = None;
 
-        for pair in pairs {
+        loop {
+            let Some(pair) = pairs.next() else { break };
+
+            if pair.as_rule() == Rule::instance {
+                assert_pairs!(pairs, 0);
+                instance = Some(Instance::parse(pair)?);
+                break;
+            }
+
             assert_rule!(pair, binding | method);
 
             match Binding::parse(pair.clone()) {
@@ -112,7 +122,7 @@ impl Parse for Class {
             };
         }
 
-        Ok(Self { name, fields, methods })
+        Ok(Self { name, fields, methods, instance })
     }
 }
 
@@ -128,7 +138,13 @@ impl Display for Class {
             write!(f, "{}, ", method)?;
         }
 
-        write!(f, "}}")
+        write!(f, "}}")?;
+
+        if let Some(instance) = &self.instance {
+            write!(f, " => {}", instance)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -136,6 +152,7 @@ impl Display for Class {
 pub struct Method {
     name: String,
     implementation: Option<String>,
+    bounds: Vec<Bound>,
     inputs: Vec<Binding>,
     output: Type,
     body: Block
@@ -164,8 +181,20 @@ impl Parse for Method {
             rule => { panic!("(method) Incorrect Rule: {:?}", rule) }
         };
 
-        let mut inputs = Vec::new();
         let mut pair = pairs.next().unwrap();
+        let mut bounds = Vec::new();
+
+        if pair.as_rule() == Rule::bounds {
+
+            for bound_pair in pair.into_inner() {
+                let bound = Bound::parse(bound_pair)?;
+                bounds.push(bound);
+            }
+
+            pair = pairs.next().unwrap();
+        }
+
+        let mut inputs = Vec::new();
 
         while pair.as_rule() == Rule::binding {
             let input = Binding::parse(pair)?;
@@ -179,7 +208,7 @@ impl Parse for Method {
         assert_pairs!(pairs, 1..);
         let body = Block::parse(pairs.next().unwrap())?;
 
-        Ok(Self { name, implementation, inputs, output, body })
+        Ok(Self { name, implementation, bounds, inputs, output, body })
     }
 }
 
@@ -191,6 +220,20 @@ impl Display for Method {
 
         write!(f, "{}", self.name)?;
 
+        if self.bounds.len() > 0 {
+            write!(f, "<")?;
+
+            for (i, bound) in self.bounds.iter().enumerate() {
+                write!(f, "{}", bound)?;
+
+                if i < self.bounds.len() - 1 {
+                    write!(f, ", ")?;
+                }
+            }
+
+            write!(f, ">")?;
+        }
+
         write!(f, "(")?;
 
         for (i, input) in self.inputs.iter().enumerate() {
@@ -201,9 +244,45 @@ impl Display for Method {
             }
         }
 
-        write!(f, ") -> {}", self.output)?;
+        write!(f, ") -> {} ", self.output)?;
 
         write!(f, "{}", self.body)
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Bound {
+    name: String,
+    impls: Vec<String>
+}
+
+impl Parse for Bound {
+    fn parse(pair: Pair<Rule>) -> Result<Self, ParseError> {
+        assert_rule!(pair, bound);
+        let mut pairs = pair.into_inner();
+
+        assert_pairs!(pairs, 2);
+
+        let name = pairs.next().unwrap().as_str().to_string();
+        let impls = pairs.map(|pair| pair.as_str().to_string()).collect();
+
+        Ok(Self { name, impls })
+    }
+}
+
+impl Display for Bound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: ", self.name)?;
+
+        for (i, impl_name) in self.impls.iter().enumerate() {
+            write!(f, "{}", impl_name)?;
+
+            if i < self.impls.len() - 1 {
+                write!(f, " + ")?;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -432,12 +511,12 @@ enum Op {
 
 impl Parse for Op {
     fn parse(pair: Pair<Rule>) -> Result<Self, ParseError> {
-        assert_rule!(pair, prec0 | prec1 | prec2);
+        assert_rule!(pair, prec0 | unary | prec1 | prec2);
         let precedence = match pair.as_rule() {
             Rule::prec2 => 2,
             Rule::prec1 => 1,
             Rule::prec0 => 0,
-            rule => panic!("(op) Incorrect Rule: {:?}", rule)
+            _ => 100
         };
 
         let mut pairs = pair.into_inner();
@@ -448,7 +527,7 @@ impl Parse for Op {
                 let pair = pairs.next().unwrap();
 
                 match pair.as_rule() {
-                    Rule::prec0 | Rule::prec1 | Rule::prec2 => {
+                    Rule::prec0 | Rule::unary | Rule::prec1 | Rule::prec2 => {
                         Op::Solo(Box::new(Op::parse(pair)?))
                     },
                     _ => {
@@ -456,7 +535,12 @@ impl Parse for Op {
                     }
                 }
             },
-            2 => {panic!("")},
+            2 => {
+                let op = pairs.next().unwrap().as_str().to_string();
+                let right = Op::parse(pairs.next().unwrap())?;
+
+                Op::Unary(op, Box::new(right))
+            },
             3 => {
                 let left = Op::parse(pairs.next().unwrap())?;
                 let op = pairs.next().unwrap().as_str().to_string();
@@ -586,6 +670,103 @@ impl Display for Lit {
     }
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub struct Instance {
+    name: String,
+    key_vals: Vec<KeyVal>
+}
+
+impl Parse for Instance {
+    fn parse(pair: Pair<Rule>) -> Result<Self, ParseError> {
+        assert_rule!(pair, instance);
+        let mut pairs = pair.into_inner();
+
+        assert_pairs!(pairs, 1..);
+        let name = pairs.next().unwrap().as_str().to_string();
+
+        let mut key_vals = Vec::new();
+
+        for pair in pairs {
+            key_vals.push(KeyVal::parse(pair)?);
+        }
+
+        Ok(Self { name, key_vals })
+    }
+}
+
+impl Display for Instance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {{ ", self.name)?;
+
+        for key_val in &self.key_vals {
+            write!(f, "{}, ", key_val)?;
+
+        }
+
+        write!(f, "}}")
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct KeyVal {
+    key: String,
+    value: Value
+}
+
+impl Parse for KeyVal {
+    fn parse(pair: Pair<Rule>) -> Result<Self, ParseError> {
+        assert_rule!(pair, key_val);
+        let mut pairs = pair.into_inner();
+
+        assert_pairs!(pairs, 1 | 2);
+
+        let key = pairs.next().unwrap().as_str().to_string();
+
+        let value = if pairs.len() == 0 {
+            Value::Expr(Expr::Var(key.clone()))
+        } else {
+            Value::parse(pairs.next().unwrap())?
+        };
+
+        Ok(Self { key, value })
+    }
+}
+
+impl Display for KeyVal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.key, self.value)
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Value {
+    Expr(Expr),
+    Instance(Instance)
+}
+
+impl Parse for Value {
+    fn parse(pair: Pair<Rule>) -> Result<Self, ParseError> {
+        match pair.as_rule() {
+            Rule::expr => {
+                Expr::parse(pair).map(Value::Expr)
+            },
+            Rule::instance => {
+                Instance::parse(pair).map(Value::Instance)
+            },
+            rule => panic!("(value) Incorrect Rule: {:?}", rule)
+        }
+    }
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Expr(expr) => write!(f, "{}", expr),
+            Self::Instance(instance) => write!(f, "{}", instance)
+        }
+    }
+}
+
 #[test]
 fn test_pest() {
     let script =
@@ -593,23 +774,82 @@ fn test_pest() {
             class Sphere4D {
                 test(abc: f32, xyz: Mat4) -> bool {
                     // (((abc - 3) - (((2 / 8) / 3) * 2)) + 1)
-                    abc - 3 - 2 / 8 / 3 * 2 + 1
+                    abc - 3 - -2 / -8 / 3 * 2 + (-1) + !27 + Vec4(100, -4, 3 - x, .2)
                 }
             }
             class Shell {
                 offset: f32,
                 shape: Any,
-                Proj::proj(vector: Vec4) -> Vec4 {
+                Proj::proj<shape: Proj>(vector: Vec4) -> Vec4 {
                     let proj: Vec4 = shape.proj(vector);
 
                     proj + offset * normalize(vector - proj)
                 }
             }
+
+            class ShellSphere {
+                radius: f32
+            } => Shell {
+                offset: 3.0 - radius,
+                shape: Sphere4D {
+                    radius
+                }
+            }
         "#;
 
-    let mut parsed = ScaffoldParser::parse(Rule::document, script).unwrap();
+    let mut parsed1 = ScaffoldParser::parse(Rule::document, script).unwrap();
+    let document1 = Document::parse(parsed1.next().unwrap()).unwrap();
+    let string1 = prettify_string(format!("{document1}"));
 
-    let document1 = Document::parse(parsed.next().unwrap()).unwrap();
+    let mut parsed2 = ScaffoldParser::parse(Rule::document, string1.as_str()).unwrap();
+    let document2 = Document::parse(parsed2.next().unwrap()).unwrap();
+    let string2 = prettify_string(format!("{document2}"));
 
-    println!("{}", document1);
+    println!("{}", string2);
+}
+
+fn prettify_string(mut string: String) -> String {
+    let mut brace_depth = 0;
+    let mut paren_depth = 0;
+    let mut i = 1;
+    let mut insert_newline = false;
+    const TAB: &'static str = "    ";
+
+    while i < string.len() {
+        let owned = string[i..i+1].to_string();
+        let slice = &owned[..];
+
+        match slice {
+            "{" => brace_depth += 1,
+            "}" => {
+                brace_depth -= 1;
+                insert_newline = true;
+            },
+            "," | "=" => insert_newline = false,
+            _ => {}
+        };
+
+        if paren_depth == 0 && insert_newline && slice != " " {
+            if brace_depth == 0 && slice == "c" {
+                string.insert_str(i, "\n");
+                i += 1;
+            }
+            let inserted_str = format!("\n{}", TAB.repeat(brace_depth));
+            string.insert_str(i, inserted_str.as_str());
+            i += inserted_str.len();
+        }
+
+        match slice {
+            "," => insert_newline = !insert_newline,
+            "{" | "}" | ";" => insert_newline = true,
+            "(" => paren_depth += 1,
+            ")" => paren_depth -= 1,
+            " " => {},
+            _ => insert_newline = false
+        };
+
+        i += 1;
+    }
+
+    string
 }

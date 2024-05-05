@@ -17,5 +17,10 @@ class Shell {
 }
 
 class Combo {
-    offset: f32,// skdbjcsjdckb
+    offset: f32,
+} => Shell {
+    offset,
+    shape: Plane4D {
+        normal: Vec4(1, 2, 3, 4)
+    }
 }

@@ -5,13 +5,17 @@ binding =  { ident ~ w ~ ":" ~ w ~ ty }
 COMMENT = _{ ("//" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
 
 implement = { ident ~ "::" ~ ident }
+bound = { ident ~ w ~ ":" ~ w ~ (ident ~ w ~ "+" ~ w)* ~ ident }
+bounds = { "<" ~ w ~ bound ~ w ~ ("," ~ w ~ bound ~ w)* ~ ">" }
 
 document = { (w ~ class)* ~ w }
 class    = {
-    "class" ~ w ~ ident ~ w ~ "{" ~ w ~ ((binding | method) ~ w ~ "," ~ w)* ~ ((binding | method) ~ w)? ~ "}"
+    "class" ~ w ~ ident ~ w ~ "{" ~
+        w ~ ((binding | method) ~ w ~ "," ~ w)* ~ ((binding | method) ~ w)?
+    ~ "}" ~ (w ~ "=>" ~ w ~ instance)?
 }
 method   = {
-    (implement | ident) ~ w ~ "(" ~ w ~ (binding ~ w ~ "," ~ w)* ~ binding? ~ ")" ~ w ~ "->" ~ w ~ ty ~ w ~ block
+    (implement | ident) ~ w ~ bounds? ~ w ~ "(" ~ w ~ (binding ~ w ~ "," ~ w)* ~ binding? ~ ")" ~ w ~ "->" ~ w ~ ty ~ w ~ block
 }
 
 block = { "{" ~ w ~ (stmt ~ w)* ~ (expr ~ w)? ~ "}" }
@@ -27,7 +31,7 @@ expr = { (prec2) }
         var       = { ident }
         lit       = { (number | bool | vec4 | mat4) }
             bool       = { "true" | "false" }
-            number     = { (("+" | "-")? ~ w ~ NUMBER+ ~ "."? ~ NUMBER*) | (("+" | "-")? ~ w ~ NUMBER* ~ "." ~ NUMBER+) }
+            number     = { (NUMBER+ ~ "."? ~ NUMBER*) | (NUMBER* ~ "." ~ NUMBER+) }
             vec4       = { "Vec4" ~ "(" ~
                 w ~ number ~ w ~ "," ~
                 w ~ number ~ w ~ "," ~
@@ -41,7 +45,12 @@ expr = { (prec2) }
                 w ~ vec4 ~ w ~ ("," ~ w)?
             ~ ")" }
         block_expr = { "{" ~ w ~ (stmt ~ w)* ~ (expr ~ w) ~ "}" }
-    prec1 = { (prec0 ~ w ~ op1 ~ w ~ prec1) | prec0 }
+    unary = { (unary_op ~ w ~ unary | prec0) }
+        unary_op = { "!" | "-" | "+" }
+    prec1 = { (unary ~ w ~ op1 ~ w ~ prec1) | unary }
         op1 = { "*" | "/" }
     prec2 = { (prec1 ~ w ~ op2 ~ w ~ prec2) | prec1 }
         op2 = { "+" | "-" }
+
+key_val = { ident ~ (w ~ ":" ~ w ~ (instance | expr))? }
+instance = { ident ~ w ~ "{" ~ w ~ (key_val ~ w ~ "," ~ w)* ~ key_val? ~ w ~ "}" }
