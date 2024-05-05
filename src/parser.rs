@@ -772,10 +772,7 @@ fn test_pest() {
     let script =
         r#"
             class Sphere4D {
-                test(abc: f32, xyz: Mat4) -> bool {
-                    // (((abc - 3) - (((2 / 8) / 3) * 2)) + 1)
-                    abc - 3 - -2 / -8 / 3 * 2 + (-1) + !27 + Vec4(100, -4, 3 - x, .2)
-                }
+                radius: f32
             }
             class Shell {
                 offset: f32,
@@ -803,9 +800,9 @@ fn test_pest() {
 
     let mut parsed2 = ScaffoldParser::parse(Rule::document, string1.as_str()).unwrap();
     let document2 = Document::parse(parsed2.next().unwrap()).unwrap();
-    let string2 = prettify_string(format!("{document2}"));
+    // let string2 = prettify_string(format!("{document2}"));
 
-    println!("{}", string2);
+    println!("{:#?}", document2);
 }
 
 fn prettify_string(mut string: String) -> String {
