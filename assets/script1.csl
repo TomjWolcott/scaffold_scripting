@@ -1,0 +1,21 @@
+class Plane4D {
+    normal: Vec4,
+    Proj::proj(vector: Vec4) -> Vec4 {
+        vector - normal * vector.dot(normal)
+    }
+}
+
+// sdihbdsiuchdsc
+class Shell {
+    offset: f32,
+    shape: Any, // sdjhcsidjncsodc
+    Proj::proj(vector: Vec4) -> Vec4 {
+        let proj = shape.proj(vector);
+
+        proj + offset * (vector - proj).normalize()
+    }
+}
+
+class Combo {
+    offset: f32,// skdbjcsjdckb
+}

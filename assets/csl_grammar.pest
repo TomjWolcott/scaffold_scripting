@@ -1,0 +1,47 @@
+ident   =  { LETTER ~ (LETTER | NUMBER)* }
+ty      =  { "f32" | "Vec4" | "bool" | "Mat4" | "Any" }
+w       = _{ ("\n" | "\r" | " " | "\t")* }
+binding =  { ident ~ w ~ ":" ~ w ~ ty }
+COMMENT = _{ ("//" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
+
+implement = { ident ~ "::" ~ ident }
+
+document = { (w ~ class)* ~ w }
+class    = {
+    "class" ~ w ~ ident ~ w ~ "{" ~ w ~ ((binding | method) ~ w ~ "," ~ w)* ~ ((binding | method) ~ w)? ~ "}"
+}
+method   = {
+    (implement | ident) ~ w ~ "(" ~ w ~ (binding ~ w ~ "," ~ w)* ~ binding? ~ ")" ~ w ~ "->" ~ w ~ ty ~ w ~ block
+}
+
+block = { "{" ~ w ~ (stmt ~ w)* ~ (expr ~ w)? ~ "}" }
+stmt  = { (decl | asgn | (expr ~ ";")) }
+    decl = { "let" ~ w ~ binding ~ w ~ "=" ~ w ~ expr ~ w ~ ";" }
+    asgn = { ident ~ w ~ "=" ~ w ~ expr ~ ";" }
+
+expr = { (prec2) }
+    exprs = { "(" ~ w ~ (expr ~ w ~ "," ~ w)* ~ (expr ~ w)? ~ ")" }
+    prec0 = { "(" ~ w ~ prec2 ~ w ~ ")" | app | dot | var | lit | block_expr }
+        app       = { ident ~ w ~ exprs }
+        dot       = { ident ~ "." ~ ident ~ exprs }
+        var       = { ident }
+        lit       = { (number | bool | vec4 | mat4) }
+            bool       = { "true" | "false" }
+            number     = { (("+" | "-")? ~ w ~ NUMBER+ ~ "."? ~ NUMBER*) | (("+" | "-")? ~ w ~ NUMBER* ~ "." ~ NUMBER+) }
+            vec4       = { "Vec4" ~ "(" ~
+                w ~ number ~ w ~ "," ~
+                w ~ number ~ w ~ "," ~
+                w ~ number ~ w ~ "," ~
+                w ~ number ~ w ~ ("," ~ w)?
+            ~ ")" }
+            mat4       = { "Mat4" ~ "(" ~
+                w ~ vec4 ~ w ~ "," ~
+                w ~ vec4 ~ w ~ "," ~
+                w ~ vec4 ~ w ~ "," ~
+                w ~ vec4 ~ w ~ ("," ~ w)?
+            ~ ")" }
+        block_expr = { "{" ~ w ~ (stmt ~ w)* ~ (expr ~ w) ~ "}" }
+    prec1 = { (prec0 ~ w ~ op1 ~ w ~ prec1) | prec0 }
+        op1 = { "*" | "/" }
+    prec2 = { (prec1 ~ w ~ op2 ~ w ~ prec2) | prec1 }
+        op2 = { "+" | "-" }
