@@ -54,7 +54,38 @@ pub enum ParseError {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Document {
-    classes: Vec<Class>
+    pub classes: Vec<Class>
+}
+
+pub fn parse_document(script: impl AsRef<str>) -> Result<Document, ParseError> {
+    let mut parsed = ScaffoldParser::parse(Rule::document, script.as_ref()).unwrap();
+    Document::parse(parsed.next().unwrap())
+}
+
+impl Document {
+    // New classes overwrite old ones!!
+    pub fn parse_and_merge(&mut self, pair: Pair<Rule>) -> Result<(), ParseError> {
+        let Document { classes: other_classes } = &mut Document::parse(pair)?;
+        let classes = std::mem::replace(&mut self.classes, Vec::new());
+
+        self.classes = classes.into_iter().filter(|Class { name, .. }| {
+            other_classes.iter().any(|Class { name: other_name, .. }| name == other_name)
+        }).collect();
+
+        self.classes.append(other_classes);
+
+        Ok(())
+    }
+
+    pub fn get_class(&self, name: impl AsRef<str>) -> Option<&Class> {
+        self.classes.iter().find(
+            |Class { name: name2, .. }| name2.as_str() == name.as_ref()
+        )
+    }
+
+    pub fn get_method(&self, name: impl AsRef<str>, method_key: &MethodKey) -> Option<&Method> {
+        self.get_class(name)?.get_method(method_key)
+    }
 }
 
 impl Parse for Document {
@@ -81,10 +112,37 @@ impl Display for Document {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Class {
-    name: String,
-    fields: Vec<Binding>,
-    methods: Vec<Method>,
-    instance: Option<Instance>
+    pub name: String,
+    pub fields: Vec<Binding>,
+    pub methods: Vec<Method>,
+    pub instance: Option<Instance>
+}
+
+#[derive(Debug, Clone)]
+pub enum MethodKey {
+    Impl(String),
+    Name(String)
+}
+
+impl Class {
+    pub fn get_method(&self, key: &MethodKey) -> Option<&Method> {
+        match key {
+            MethodKey::Impl(impl_name) => self.methods.iter().find(|Method { implementation, .. }| {
+                implementation.as_ref() == Some(impl_name)
+            }),
+            MethodKey::Name(method_name) => self.methods.iter().find(|Method { name, .. }| {
+                name == method_name
+            })
+        }
+    }
+
+    pub fn get_impl(&self, impl_name: impl AsRef<str>) -> Option<&Method> {
+        self.methods.iter().find(|Method { implementation, .. }| {
+            implementation
+                .as_ref()
+                .is_some_and(|impl_name2| impl_name2.as_str() == impl_name.as_ref())
+        })
+    }
 }
 
 impl Parse for Class {
@@ -150,12 +208,12 @@ impl Display for Class {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Method {
-    name: String,
-    implementation: Option<String>,
-    bounds: Vec<Bound>,
-    inputs: Vec<Binding>,
-    output: Type,
-    body: Block
+    pub name: String,
+    pub implementation: Option<String>,
+    pub bounds: Vec<Bound>,
+    pub inputs: Vec<Binding>,
+    pub output: Type,
+    pub body: Block
 }
 
 impl Parse for Method {
@@ -252,8 +310,8 @@ impl Display for Method {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Bound {
-    name: String,
-    impls: Vec<String>
+    pub name: String,
+    pub impls: Vec<String>
 }
 
 impl Parse for Bound {
@@ -261,7 +319,7 @@ impl Parse for Bound {
         assert_rule!(pair, bound);
         let mut pairs = pair.into_inner();
 
-        assert_pairs!(pairs, 2);
+        assert_pairs!(pairs, 2..);
 
         let name = pairs.next().unwrap().as_str().to_string();
         let impls = pairs.map(|pair| pair.as_str().to_string()).collect();
@@ -287,7 +345,7 @@ impl Display for Bound {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Block(Vec<Stmt>, Option<Expr>);
+pub struct Block(pub Vec<Stmt>, pub Option<Expr>);
 
 impl Parse for Block {
     fn parse(pair: Pair<Rule>) -> Result<Self, ParseError> {
@@ -502,6 +560,7 @@ impl Display for Expr {
     }
 }
 
+// Intermediate step for ensuring left-recursive order of ops
 enum Op {
     Expr(Expr),
     Solo(Box<Op>),
@@ -577,7 +636,7 @@ impl Op {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Binding(String, Type);
+pub struct Binding(pub String, pub Type);
 
 impl Parse for Binding {
     fn parse(pair: Pair<Rule>) -> Result<Self, ParseError> {
@@ -608,7 +667,7 @@ pub enum Type {
     F32,
     Vec4,
     Mat4,
-    Any
+    Class
 }
 
 impl Parse for Type {
@@ -620,7 +679,7 @@ impl Parse for Type {
             "f32" => Ok(Self::F32),
             "Vec4" => Ok(Self::Vec4),
             "Mat4" => Ok(Self::Mat4),
-            "Any" => Ok(Self::Any),
+            "Class" => Ok(Self::Class),
             ty => Err(ParseError::TypeNotFound(ty.to_string()))
         }
     }
@@ -633,7 +692,7 @@ impl Display for Type {
             Self::F32 => write!(f, "f32"),
             Self::Vec4 => write!(f, "Vec4"),
             Self::Mat4 => write!(f, "Mat4"),
-            Self::Any => write!(f, "Any")
+            Self::Class => write!(f, "Class")
         }
     }
 }
@@ -672,8 +731,8 @@ impl Display for Lit {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Instance {
-    name: String,
-    key_vals: Vec<KeyVal>
+    pub name: String,
+    pub key_vals: Vec<KeyVal>
 }
 
 impl Parse for Instance {
@@ -709,8 +768,8 @@ impl Display for Instance {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct KeyVal {
-    key: String,
-    value: Value
+    pub key: String,
+    pub value: Value
 }
 
 impl Parse for KeyVal {
@@ -776,7 +835,7 @@ fn test_pest() {
             }
             class Shell {
                 offset: f32,
-                shape: Any,
+                shape: Class,
                 Proj::proj<shape: Proj>(vector: Vec4) -> Vec4 {
                     let proj: Vec4 = shape.proj(vector);
 

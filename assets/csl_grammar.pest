@@ -1,5 +1,5 @@
 ident   =  { LETTER ~ (LETTER | NUMBER)* }
-ty      =  { "f32" | "Vec4" | "bool" | "Mat4" | "Any" }
+ty      =  { "f32" | "Vec4" | "bool" | "Mat4" | "Class" }
 w       = _{ ("\n" | "\r" | " " | "\t")* }
 binding =  { ident ~ w ~ ":" ~ w ~ ty }
 COMMENT = _{ ("//" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }

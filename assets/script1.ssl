@@ -1,0 +1,29 @@
+class Plane4D {
+    normal: Vec4,
+    Proj::proj(vector: Vec4) -> Vec4 {
+        vector - normal * dot(vector, normal)
+    },
+    Sdf::sdf(vector: Vec4) -> f32 {
+        dot(vector, normal)
+    }
+}
+
+class Shell {
+    offset: f32,
+    shape: Class,
+    Proj::proj<shape: proj>(vector: Vec4) -> Vec4 {
+        let proj = shape.proj(vector);
+
+        proj + offset * normalize(vector - proj)
+    },
+    Sdf::sdf<shape: proj>(vector: Vec4) -> f32 {
+        abs(shape.sdf(vector)) - offset
+    }
+}
+
+class MyEvents {
+
+    OnKeyPress::on_key_press(key: char) {
+
+    }
+}

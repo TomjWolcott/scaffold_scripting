@@ -1,4 +1,4 @@
-# Scaffold Scripting language for Arbgeom
+# Scripting Language for Arbgeom: Structured Scaffolding language
 Still a work in progress
 
 ## Example:
