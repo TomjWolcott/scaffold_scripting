@@ -571,12 +571,19 @@ impl Display for Bound {
     }
 }
 
+
+// Useful for tests where I'm just manipulating ASTs
+pub fn parse_block(script: impl AsRef<str>) -> Result<Block, ParseError> {
+    let mut parsed = ScaffoldParser::parse(Rule::block_wrapper, script.as_ref()).unwrap();
+    Block::parse(parsed.next().unwrap().into_inner().next().unwrap())
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Block(pub Vec<Stmt>, pub Option<Expr>);
 
 impl Parse for Block {
     fn parse(pair: Pair<Rule>) -> Result<Self, ParseError> {
-        assert_rule!(pair, block);
+        assert_rule!(pair, block | block_expr);
         let pairs = pair.into_inner();
 
         let mut stmts = Vec::new();
@@ -622,7 +629,8 @@ impl Display for Block {
 pub enum Stmt {
     Declare(Binding, Expr),
     Assign(String, Expr),
-    Expr(Expr)
+    Expr(Expr),
+    Noop,
 }
 
 impl Parse for Stmt {
@@ -670,7 +678,10 @@ impl Display for Stmt {
                 write!(f, "{} = {};", name, expr)
             },
             Self::Expr(expr) => {
-                write!(f, "{}", expr)
+                write!(f, "{};", expr)
+            },
+            Self::Noop => {
+                write!(f, "")
             }
         }
     }
@@ -689,7 +700,7 @@ pub enum Expr {
 
 impl Parse for Expr {
     fn parse(expr_pair: Pair<Rule>) -> Result<Self, ParseError> {
-        assert_rule!(expr_pair, expr | app | dot | var | lit | block_expr);
+        assert_rule!(expr_pair, expr | app | dot | var | lit | block_expr_wrapper);
         let rule = expr_pair.as_rule();
         let mut expr_pairs = expr_pair.into_inner();
 
@@ -731,7 +742,7 @@ impl Parse for Expr {
             Rule::lit => {
                 Expr::Lit(Lit::parse(expr_pairs.next().unwrap())?)
             },
-            Rule::block_expr => {
+            Rule::block_expr_wrapper => {
                 Expr::Block(Box::new(Block::parse(expr_pairs.next().unwrap())?))
             },
             _ => panic!("(expr) Incorrect Rule: {:?}", rule)
@@ -894,7 +905,8 @@ pub enum Type {
     F32,
     Vec4,
     Mat4,
-    Class
+    Class,
+    Auto,
 }
 
 impl Parse for Type {
@@ -919,7 +931,8 @@ impl Display for Type {
             Self::F32 => write!(f, "f32"),
             Self::Vec4 => write!(f, "Vec4"),
             Self::Mat4 => write!(f, "Mat4"),
-            Self::Class => write!(f, "Class")
+            Self::Class => write!(f, "Class"),
+            Self::Auto => write!(f, "Auto")
         }
     }
 }
@@ -1113,7 +1126,7 @@ fn test_pest() {
 pub fn prettify_string(mut string: String) -> String {
     let mut brace_depth = 0;
     let mut paren_depth = 0;
-    let mut i = 1;
+    let mut i = 0;
     let mut insert_newline = false;
     const TAB: &'static str = "    ";
 
@@ -1130,7 +1143,7 @@ pub fn prettify_string(mut string: String) -> String {
             _ => {}
         };
 
-        if paren_depth == 0 && insert_newline && slice != " " {
+        if paren_depth < 10 && insert_newline && slice != " " {
             if brace_depth == 0 && slice == "c" {
                 string.insert_str(i, "\n");
                 i += 1;
@@ -1143,9 +1156,9 @@ pub fn prettify_string(mut string: String) -> String {
         match slice {
             "{" => {brace_depth += 1; insert_newline = true},
             "," => insert_newline = !insert_newline,
-            "}" | ";" => insert_newline = true,
-            "(" => paren_depth += 1,
-            ")" => paren_depth -= 1,
+            ";" => insert_newline = true,
+            "(" => {paren_depth += 1; insert_newline = false},
+            ")" => {paren_depth -= 1; insert_newline = false},
             " " => {},
             _ => insert_newline = false
         };

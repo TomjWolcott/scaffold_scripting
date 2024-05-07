@@ -13,6 +13,7 @@ impl<E> WalkTreeMut<E> for Stmt {
             Stmt::Declare(_, expr) => expr.walk_tree_mut(func)?,
             Stmt::Assign(_, expr) => expr.walk_tree_mut(func)?,
             Stmt::Expr(expr) => expr.walk_tree_mut(func)?,
+            Stmt::Noop => {}
         };
 
         Ok(())
