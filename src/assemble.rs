@@ -1,12 +1,54 @@
+use std::fmt;
+use std::fmt::{Display, Formatter};
 use crate::parser::{Bound, Document, Expr, Method, MethodKey, parse_document, prettify_string, Stmt};
 use crate::structure::{Field, Structure};
 use crate::tree_walk::{TreeNodeMut, WalkTreeMut};
 
 use anyhow::{anyhow, Context, Result as AnyResult};
+use glam::{Mat4, Vec4};
+
 
 impl Structure {
+    pub fn assemble_fields(&self, dynamic_collector: &mut impl FnMut(&String, &Field)) -> AnyResult<Vec<(String, Field)>> {
+        let mut fields = Vec::new();
+
+        for (field_name, field) in self.fields.iter() {
+            match field {
+                Field::Dynamic(id, real_field) => {
+                    dynamic_collector(id, real_field);
+
+                    fields.push((field_name.clone(), *real_field.clone()))
+                }
+                Field::Structure(structure) => {
+                    let structure_fields = structure.assemble_fields(dynamic_collector)?;
+
+                    fields.append(&mut structure_fields.into_iter().map(
+                        |(other_field_name, field)| (format!("__{}__{}", field_name, other_field_name), field)
+                    ).collect::<Vec<_>>())
+                }
+                _ => fields.push((field_name.clone(), field.clone()))
+            }
+        }
+
+        Ok(fields)
+    }
+
+    pub fn assemble_methods(&self, document: &Document) -> AnyResult<Vec<Method>> {
+        let mut methods = Vec::new();
+        let class = document.get_class(&self.name).context("Couldn't find class")?;
+
+        for method in class.methods.iter() {
+            methods.push(self.assemble_method(
+                document,
+                MethodKey::new(method.implementation.as_ref(), &method.name)
+            )?);
+        }
+
+        Ok(methods)
+    }
+
     pub fn assemble_method(&self, document: &Document, method_key: MethodKey) -> AnyResult<Method> {
-        self.assemble_method_rec(document, method_key, "head".to_string())
+        self.assemble_method_rec(document, method_key, "".to_string())
     }
 
     fn assemble_method_rec(&self, document: &Document, method_key: MethodKey, id: String) -> AnyResult<Method> {
@@ -23,7 +65,7 @@ impl Structure {
             match expr {
                 Expr::Var(var) => {
                     if self.get_field(&var).is_some() || var.starts_with("__") {
-                        *var = format!("__{id}__{var}");
+                        *var = format!("{id}{var}");
                     }
 
                     Ok(())
@@ -36,7 +78,7 @@ impl Structure {
                     };
 
                     let Method { mut body, inputs, .. } = structure.assemble_method_rec(
-                        document, MethodKey::new(Some(&interface.name), &method_name), field_name.clone()
+                        document, MethodKey::new(Some(&interface.name), &method_name), format!("__{}__", field_name)
                     )?;
 
                     for (arg, binding) in args.iter().zip(inputs).rev() {
@@ -55,17 +97,88 @@ impl Structure {
     }
 }
 
+pub struct AssembledStructure {
+    fields: Vec<(String, AssembledField)>,
+    methods: Vec<Method>
+}
+
+impl AssembledStructure {
+    pub fn new(document: &Document, structure: Structure) -> AnyResult<Self> {
+        Ok(Self {
+            fields: structure
+                .assemble_fields(&mut |_, _| {})?
+                .into_iter()
+                .map(|(name, field)| Ok((name, AssembledField::try_from(field).context("Couldn't convert field")?)))
+                .collect::<AnyResult<Vec<(String, AssembledField)>>>()?,
+            methods: structure.assemble_methods(document)?
+        })
+    }
+}
+
+impl Display for AssembledStructure {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "Fields: {{ ")?;
+
+        for (name, field) in self.fields.iter() {
+            write!(f, "{}: {:?}, ", name, field)?;
+        }
+
+        write!(f, " }} Methods: {{ ")?;
+
+        for method in self.methods.iter() {
+            write!(f, "{}, ", method)?;
+        }
+
+        write!(f, " }}")
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum AssembledField {
+    F32(f32),
+    Bool(bool),
+    Vec4(Vec4),
+    Mat4(Mat4)
+}
+
+impl TryFrom<Field> for AssembledField {
+    type Error = anyhow::Error;
+
+    fn try_from(field: Field) -> AnyResult<Self> {
+        match field {
+            Field::F32(f) => Ok(Self::F32(f)),
+            Field::Bool(b) => Ok(Self::Bool(b)),
+            Field::Vec4(v) => Ok(Self::Vec4(v)),
+            Field::Mat4(m) => Ok(Self::Mat4(m)),
+            _ => Err(anyhow!("Field not supported"))
+        }
+    }
+}
+
+impl Display for AssembledField {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            AssembledField::F32(float) => write!(f, "{}", float),
+            AssembledField::Bool(b) => write!(f, "{}", b),
+            AssembledField::Vec4(v) => write!(f, "{:?}", v),
+            AssembledField::Mat4(m) => write!(f, "{:?}", m)
+        }
+    }
+}
+
 #[test]
-fn assemble_method() {
-    let (document, structure) = get_test_stuff(0, 1);
+fn try_assemble_method() {
+    let (document, structure) = get_test_stuff(0, 0);
     println!("Document: {document}\nStructure: {structure}");
 
     let assembled_method = structure.assemble_method(
         &document,
-        MethodKey::new(Some("Sdf"), "sdf")
+        MethodKey::new(Some("Proj"), "proj")
     ).unwrap();
 
-    println!("Assembled Method: {}", prettify_string(format!("{assembled_method}")));
+    let assembled_structure = AssembledStructure::new(&document, structure).unwrap();
+
+    println!("Assembled Method: {}\nAssembled Structure: {}", prettify_string(format!("{assembled_method}")), prettify_string(format!("{assembled_structure}")));
 }
 
 fn get_test_stuff(opt1: usize, opt2: usize) -> (Document, Structure) {

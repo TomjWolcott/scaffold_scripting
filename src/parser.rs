@@ -1144,7 +1144,7 @@ pub fn prettify_string(mut string: String) -> String {
             _ => {}
         };
 
-        if paren_depth < 10 && insert_newline && slice != " " {
+        if paren_depth < 1 && insert_newline && slice != " " {
             if brace_depth == 0 && slice == "c" {
                 string.insert_str(i, "\n");
                 i += 1;
