@@ -6,7 +6,7 @@ pub trait WalkTreeMut<E> {
 }
 
 impl<E> WalkTreeMut<E> for Stmt {
-    fn walk_tree_mut(&mut self, mut func: &mut impl for<'a> FnMut(TreeNodeMut<'a>) -> Result<(), E>) -> Result<(), E> {
+    fn walk_tree_mut(&mut self, func: &mut impl for<'a> FnMut(TreeNodeMut<'a>) -> Result<(), E>) -> Result<(), E> {
         func(TreeNodeMut::Stmt(self))?;
 
         match self {

@@ -64,7 +64,8 @@ pub fn parse_document(script: impl AsRef<str>) -> Result<Document, ParseError> {
 }
 
 impl Document {
-    // New classes/interfaces overwrite old ones!!
+    #[allow(dead_code)]
+    /// New classes/interfaces overwrite old ones!!
     pub fn parse_and_merge(&mut self, pair: Pair<Rule>) -> Result<(), ParseError> {
         let Document {
             classes: other_classes,

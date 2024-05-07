@@ -1,4 +1,3 @@
-use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::parser::*;
 use crate::tree_walk::{TreeNodeMut, WalkTreeMut};
@@ -6,7 +5,7 @@ use crate::tree_walk::{TreeNodeMut, WalkTreeMut};
 //   I know I'm doing A LOT of cloning by using Vec, but the scope won't ever really get that big,
 // so I'll put up with it for right now.
 #[derive(Clone)]
-struct Scope(Vec<(String, String)>);
+pub struct Scope(pub Vec<(String, String)>);
 
 impl Scope {
     pub fn new() -> Self {

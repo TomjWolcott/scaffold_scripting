@@ -1,6 +1,3 @@
-use glam::Vec4;
-use std::fmt::{Display};
-use std::fmt;
 use crate::parser::{Bound, Document, Expr, Method, MethodKey, parse_document, prettify_string, Stmt};
 use crate::structure::{Field, Structure};
 use crate::tree_walk::{TreeNodeMut, WalkTreeMut};
