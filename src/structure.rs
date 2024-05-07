@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use ron::{from_str, Map, Value};
 use glam::{bool, f32, Mat4, Vec4};
 use std::fmt::{Display, Formatter};
@@ -21,7 +22,7 @@ pub trait TryFromRonValue where Self: Sized {
     fn try_from_ron_value(value: Value) -> ron::Result<Self, FromRonError>;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Structure {
     pub name: String,
     pub fields: Vec<(String, Field)>
@@ -73,7 +74,7 @@ impl Display for Structure {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Field {
     F32(f32),
     Bool(bool),

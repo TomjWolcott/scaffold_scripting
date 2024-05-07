@@ -54,6 +54,7 @@ pub enum ParseError {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Document {
+    pub interfaces: Vec<Interface>,
     pub classes: Vec<Class>
 }
 
@@ -63,18 +64,33 @@ pub fn parse_document(script: impl AsRef<str>) -> Result<Document, ParseError> {
 }
 
 impl Document {
-    // New classes overwrite old ones!!
+    // New classes/interfaces overwrite old ones!!
     pub fn parse_and_merge(&mut self, pair: Pair<Rule>) -> Result<(), ParseError> {
-        let Document { classes: other_classes } = &mut Document::parse(pair)?;
+        let Document {
+            classes: other_classes,
+            interfaces: other_interfaces
+        } = &mut Document::parse(pair)?;
+
         let classes = std::mem::replace(&mut self.classes, Vec::new());
+        let interfaces = std::mem::replace(&mut self.interfaces, Vec::new());
 
         self.classes = classes.into_iter().filter(|Class { name, .. }| {
             other_classes.iter().any(|Class { name: other_name, .. }| name == other_name)
         }).collect();
 
+        self.interfaces = interfaces.into_iter().filter(|Interface { name, .. }| {
+            other_interfaces.iter().any(|Interface { name: other_name, .. }| name == other_name)
+        }).collect();
+
         self.classes.append(other_classes);
 
         Ok(())
+    }
+
+    pub fn get_interface(&self, name: impl AsRef<str>) -> Option<&Interface> {
+        self.interfaces.iter().find(
+            |Interface { name: name2, .. }| name2.as_str() == name.as_ref()
+        )
     }
 
     pub fn get_class(&self, name: impl AsRef<str>) -> Option<&Class> {
@@ -83,8 +99,30 @@ impl Document {
         )
     }
 
+    /// Returns the method with key from the class or from a default implementation if the class implements it
     pub fn get_method(&self, name: impl AsRef<str>, method_key: &MethodKey) -> Option<&Method> {
-        self.get_class(name)?.get_method(method_key)
+        let class = self.get_class(name)?;
+
+        if let Some(method) = class.get_method(method_key) {
+            return Some(method);
+        }
+
+        let interface = self.get_interface(method_key.0.as_ref()?)?;
+
+        class.get_implementations(interface)
+            .map(|impls| {
+                impls.into_iter().find(|Method { name, ..}| name == &method_key.1)
+            }).flatten()
+    }
+
+    pub fn get_class_mut(&mut self, name: impl AsRef<str>) -> Option<&mut Class> {
+        self.classes.iter_mut().find(
+            |Class { name: name2, .. }| name2.as_str() == name.as_ref()
+        )
+    }
+
+    pub fn get_method_mut(&mut self, name: impl AsRef<str>, method_key: &MethodKey) -> Option<&mut Method> {
+        self.get_class_mut(name)?.get_method_mut(method_key)
     }
 }
 
@@ -92,21 +130,163 @@ impl Parse for Document {
     fn parse(pair: Pair<Rule>) -> Result<Self, ParseError> {
         assert_rule!(pair, document);
 
-        let classes_result = pair.into_inner()
-            .map(|class_pair| Class::parse(class_pair))
-            .collect::<Result<Vec<Class>, ParseError>>();
+        let mut classes = Vec::new();
+        let mut interfaces = Vec::new();
 
-        classes_result.map(|classes| Self { classes })
+        for pair in pair.into_inner() {
+            match pair.as_rule() {
+                Rule::class => {
+                    let class = Class::parse(pair)?;
+                    classes.push(class);
+                },
+                Rule::interface => {
+                    let interface = Interface::parse(pair)?;
+                    interfaces.push(interface);
+                },
+                rule => { panic!("(document) Incorrect Rule: {:?}", rule) }
+            }
+        }
+
+        Ok(Self { classes, interfaces })
     }
 }
 
 impl Display for Document {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for interface in &self.interfaces {
+            write!(f, "{} ", interface)?;
+        }
+
         for class in &self.classes {
             write!(f, "{} ", class)?;
         }
 
         Ok(())
+    }
+}
+
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Interface {
+    pub name: String,
+    pub methods: Vec<InterfaceMethod>
+}
+
+impl Interface {
+    pub fn has_method(&self, method_name: impl AsRef<str>) -> bool {
+        self.methods.iter().any(
+            |method| method.header().0.as_str() == method_name.as_ref()
+        )
+    }
+
+    pub fn get_method(&self, method_name: impl AsRef<str>) -> Option<&InterfaceMethod> {
+        self.methods.iter().find(
+            |method| method.header().0.as_str() == method_name.as_ref()
+        )
+    }
+}
+
+impl Parse for Interface {
+    fn parse(pair: Pair<Rule>) -> Result<Self, ParseError> {
+        assert_rule!(pair, interface);
+
+        let mut pairs = pair.into_inner();
+
+        assert_pairs!(pairs, 1..);
+        let name = pairs.next().unwrap().as_str().to_string();
+
+        let mut methods = Vec::new();
+
+        for method_pair in pairs {
+            let method = InterfaceMethod::parse(method_pair)?;
+            methods.push(method);
+        }
+
+        Ok(Self { name, methods })
+    }
+}
+
+impl Display for Interface {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "interface {} {{ ", self.name)?;
+
+        for method in &self.methods {
+            write!(f, "{}, ", method)?;
+        }
+
+        write!(f, "}}")
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum InterfaceMethod {
+    Header { name: String, inputs: Vec<Binding>, output: Type },
+    DefaultImpl(Method),
+}
+
+impl InterfaceMethod {
+    pub fn header(&self) -> (&String, &Vec<Binding>, &Type) {
+        match self {
+            Self::Header { name, inputs, output } => (name, inputs, output),
+            Self::DefaultImpl(Method { name, inputs, output, .. }) => (name, inputs, output)
+        }
+    }
+}
+
+impl Parse for InterfaceMethod {
+    fn parse(pair: Pair<Rule>) -> Result<Self, ParseError> {
+        assert_rule!(pair, method_header | default_method);
+
+        let mut pairs = pair.into_inner();
+
+        assert_pairs!(pairs, 1..);
+        let name = pairs.next().unwrap().as_str().to_string();
+
+        let mut inputs = Vec::new();
+
+        let mut pair = pairs.next().unwrap();
+
+        while pair.as_rule() == Rule::binding {
+            let input = Binding::parse(pair)?;
+
+            inputs.push(input);
+            pair = pairs.next().unwrap();
+        }
+
+        let output = Type::parse(pair)?;
+
+        if let Some(block_pair) = pairs.next() {
+            let body = Block::parse(block_pair)?;
+
+            Ok(Self::DefaultImpl(Method {
+                name, implementation: None, bounds: vec![], inputs, output, body
+            }))
+        } else {
+            Ok(Self::Header { name, inputs, output })
+        }
+    }
+}
+
+impl Display for InterfaceMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Header { name, inputs, output } => {
+                write!(f, "{}(", name)?;
+
+                for (i, input) in inputs.iter().enumerate() {
+                    write!(f, "{}", input)?;
+
+                    if i < inputs.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+
+                write!(f, ") -> {}", output)
+            },
+            Self::DefaultImpl(method) => {
+                write!(f, "{}", method)
+            }
+        }
     }
 }
 
@@ -119,29 +299,61 @@ pub struct Class {
 }
 
 #[derive(Debug, Clone)]
-pub enum MethodKey {
-    Impl(String),
-    Name(String)
+pub struct MethodKey(pub Option<String>, pub String);
+
+impl MethodKey {
+    pub fn new(impl_name: Option<impl AsRef<str>>, name: impl AsRef<str>) -> Self {
+        MethodKey(
+            impl_name.map(|str| str.as_ref().to_string()),
+            name.as_ref().to_string()
+        )
+    }
 }
 
 impl Class {
     pub fn get_method(&self, key: &MethodKey) -> Option<&Method> {
-        match key {
-            MethodKey::Impl(impl_name) => self.methods.iter().find(|Method { implementation, .. }| {
-                implementation.as_ref() == Some(impl_name)
-            }),
-            MethodKey::Name(method_name) => self.methods.iter().find(|Method { name, .. }| {
-                name == method_name
-            })
+        self.methods.iter().find(|Method { implementation, name, .. }| {
+            implementation == &key.0 && name == &key.1
+        })
+    }
+
+    pub fn get_method_mut(&mut self, key: &MethodKey) -> Option<&mut Method> {
+        self.methods.iter_mut().find(|Method { implementation, name, .. }| {
+            implementation == &key.0 && name == &key.1
+        })
+    }
+
+    pub fn get_impl(&self, impl_name: impl AsRef<str>, method_name: impl AsRef<str>) -> Option<&Method> {
+        self.methods.iter().find(|Method { implementation, name, .. }| {
+            implementation.as_ref().is_some_and(|s| s.as_str() == impl_name.as_ref()) &&
+                name.as_str() == method_name.as_ref()
+        })
+    }
+
+    pub fn get_implementation<'a>(&'a self, interface: &'a Interface, interface_method: &'a InterfaceMethod) -> Option<&'a Method> {
+        let (
+            name,
+            inputs,
+            output
+        ) = interface_method.header();
+
+        if let Some(method) = self.get_impl(&interface.name, &name) {
+            if inputs == &method.inputs && output == &method.output {
+                Some(method)
+            } else {
+                None
+            }
+        } else if let InterfaceMethod::DefaultImpl(method) = interface_method {
+            Some(method)
+        } else {
+            None
         }
     }
 
-    pub fn get_impl(&self, impl_name: impl AsRef<str>) -> Option<&Method> {
-        self.methods.iter().find(|Method { implementation, .. }| {
-            implementation
-                .as_ref()
-                .is_some_and(|impl_name2| impl_name2.as_str() == impl_name.as_ref())
-        })
+    pub fn get_implementations<'a>(&'a self, interface: &'a Interface) -> Option<Vec<&'a Method>> {
+        interface.methods.iter().map(|interface_method| {
+            self.get_implementation(interface, interface_method)
+        }).collect::<Option<Vec<_>>>()
     }
 }
 
@@ -312,6 +524,21 @@ impl Display for Method {
 pub struct Bound {
     pub name: String,
     pub impls: Vec<String>
+}
+
+impl Bound {
+    /// Returns the FIRST interface with a method name that matches
+    pub fn get_interface_with_method<'a>(&self, document: &'a Document, method_name: impl AsRef<str>) -> Option<&'a Interface> {
+        for impl_name in self.impls.iter() {
+            let Some(interface) = document.get_interface(impl_name) else { continue };
+
+            if interface.has_method(&method_name) {
+                return Some(interface);
+            }
+        }
+
+        None
+    }
 }
 
 impl Parse for Bound {
@@ -830,6 +1057,13 @@ impl Display for Value {
 fn test_pest() {
     let script =
         r#"
+            interface Sdf {
+                sdf(vector: Vec4) -> f32,
+                grad(vector: Vec4) -> Vec4 {
+                    abc
+                }
+            }
+
             class Sphere4D {
                 radius: f32
             }
@@ -840,7 +1074,17 @@ fn test_pest() {
                     let proj: Vec4 = shape.proj(vector);
 
                     proj + offset * normalize(vector - proj)
+                },
+                Sdf::sdf<shape: Sdf>(vector: Vec4) -> f32 {
+                    abs(shape.sdf(vector)) - offset
+                },
+                Sdf::grad(vector: Vec4) -> Vec4 {
+                    def
                 }
+            }
+
+            interface Proj {
+                proj(vector: Vec4) -> Vec4
             }
 
             class ShellSphere {
@@ -853,18 +1097,20 @@ fn test_pest() {
             }
         "#;
 
-    let mut parsed1 = ScaffoldParser::parse(Rule::document, script).unwrap();
-    let document1 = Document::parse(parsed1.next().unwrap()).unwrap();
-    let string1 = prettify_string(format!("{document1}"));
+    let mut parsed = ScaffoldParser::parse(Rule::document, script).unwrap();
+    let document = Document::parse(parsed.next().unwrap()).unwrap();
+    let string = prettify_string(format!("{document}"));
+    let implementations = document
+        .get_class("Shell")
+        .unwrap()
+        .get_implementations(document.get_interface("Sdf").unwrap());
 
-    let mut parsed2 = ScaffoldParser::parse(Rule::document, string1.as_str()).unwrap();
-    let document2 = Document::parse(parsed2.next().unwrap()).unwrap();
-    // let string2 = prettify_string(format!("{document2}"));
+    println!("impls:\n{}\n\n", implementations.unwrap().iter().map(|x| format!("{x}")).collect::<Vec<_>>().join("\n"));
 
-    println!("{:#?}", document2);
+    println!("{}", string);
 }
 
-fn prettify_string(mut string: String) -> String {
+pub fn prettify_string(mut string: String) -> String {
     let mut brace_depth = 0;
     let mut paren_depth = 0;
     let mut i = 1;
@@ -876,7 +1122,6 @@ fn prettify_string(mut string: String) -> String {
         let slice = &owned[..];
 
         match slice {
-            "{" => brace_depth += 1,
             "}" => {
                 brace_depth -= 1;
                 insert_newline = true;
@@ -896,8 +1141,9 @@ fn prettify_string(mut string: String) -> String {
         }
 
         match slice {
+            "{" => {brace_depth += 1; insert_newline = true},
             "," => insert_newline = !insert_newline,
-            "{" | "}" | ";" => insert_newline = true,
+            "}" | ";" => insert_newline = true,
             "(" => paren_depth += 1,
             ")" => paren_depth -= 1,
             " " => {},

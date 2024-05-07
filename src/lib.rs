@@ -1,6 +1,7 @@
 mod parser;
 mod structure;
 mod bounds_tree;
+mod tree_walk;
 
 use std::fmt::Display;
 use parser::*;
