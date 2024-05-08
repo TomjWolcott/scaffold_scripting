@@ -1,13 +1,13 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::parser::*;
-use crate::tree_walk::{TreeNodeMut, WalkTreeMut};
+use crate::tree_walk::{Options, RecOrdering, TreeNodeMut, WalkTreeMut};
 
 //   I know I'm doing A LOT of cloning by using Vec, but the scope won't ever really get that big,
 // so I'll put up with it for right now.
 #[derive(Clone)]
-pub struct Scope(pub Vec<(String, String)>);
+pub struct IdentScope(pub Vec<(String, String)>);
 
-impl Scope {
+impl IdentScope {
     pub fn new() -> Self {
         Self(Vec::new())
     }
@@ -30,11 +30,11 @@ fn gen_ident(str: impl AsRef<str>) -> String {
 }
 
 pub trait AlphaConvert {
-    fn alpha_convert(&mut self, scope: &mut Scope);
+    fn alpha_convert(&mut self, scope: &mut IdentScope);
 }
 
 impl AlphaConvert for Block {
-    fn alpha_convert(&mut self, scope: &mut Scope) {
+    fn alpha_convert(&mut self, scope: &mut IdentScope) {
         for stmt in self.0.iter_mut() {
             stmt.alpha_convert(scope);
         }
@@ -46,7 +46,7 @@ impl AlphaConvert for Block {
 }
 
 impl AlphaConvert for Stmt {
-    fn alpha_convert(&mut self, scope: &mut Scope) {
+    fn alpha_convert(&mut self, scope: &mut IdentScope) {
         match self {
             Stmt::Declare(Binding(var, _), expr) => {
                 expr.alpha_convert(&mut scope.clone());
@@ -71,7 +71,7 @@ impl AlphaConvert for Stmt {
 }
 
 impl AlphaConvert for Expr {
-    fn alpha_convert(&mut self, scope: &mut Scope) {
+    fn alpha_convert(&mut self, scope: &mut IdentScope) {
         match self {
             Expr::BinExpr(expr1, _, expr2) => {
                 expr1.alpha_convert(&mut scope.clone());
@@ -112,13 +112,22 @@ impl Block {
     pub fn inline_blocks(&mut self) {
         let mut i = 0;
 
+        if let Some(expr) = self.1.take() {
+            let return_expr = gen_ident("return_expr");
+            self.0.push(Stmt::Declare(Binding(return_expr.clone(), Type::Auto), expr));
+
+            self.1 = Some(Expr::Var(return_expr))
+        }
+
         while i < self.0.len() {
+            let mut do_increment = true;
+
             match &mut self.0[i] {
                 Stmt::Declare(_, expr) |
                 Stmt::Assign(_, expr) |
                 Stmt::Expr(expr) => {
                     let blocks = expr.promote_blocks();
-                    let there_are_blocks = blocks.len() > 0;
+                    do_increment = blocks.len() == 0;
 
                     for (Block(stmts, expr_opt), new_var) in blocks {
                         if let Some(expr) = expr_opt {
@@ -127,13 +136,11 @@ impl Block {
 
                         self.0.splice(i..i, stmts);
                     }
-
-                    if there_are_blocks { i -= 1 };
                 }
                 Stmt::Noop => {}
             }
 
-            i += 1;
+            if do_increment { i += 1 };
         }
     }
 }
@@ -165,74 +172,78 @@ impl Expr {
     }
 }
 
-pub fn cull_single_use_vars(block: &mut Block) {
-    let mut deletable_vars = Vec::new();
+impl Block {
+    pub fn cull_single_use_vars(&mut self) {
+        let mut deletable_vars = Vec::new();
 
-    let _: Result<(), ()> = block.walk_tree_mut(&mut |node| {
-        match &node {
-            TreeNodeMut::Stmt(stmt) => match stmt {
-                Stmt::Declare(Binding(var_name, _), _) => {
-                    deletable_vars.push((var_name.clone(), 0));
+        let _: Result<(), ()> = self.walk_tree_mut(&mut |node| {
+            match &node {
+                TreeNodeMut::Stmt(stmt) => match stmt {
+                    Stmt::Declare(Binding(var_name, _), _) => {
+                        deletable_vars.push((var_name.clone(), 0));
+                    }
+                    Stmt::Assign(var_name, _) => {
+                        deletable_vars.retain(|(other_var_name, _)| var_name != other_var_name)
+                    }
+                    _ => {}
                 }
-                Stmt::Assign(var_name, _) => {
-                    deletable_vars.retain(|(other_var_name, _)| var_name != other_var_name)
+                TreeNodeMut::Expr(expr) => match expr {
+                    Expr::Dot(var_name, _, _) |
+                    Expr::Var(var_name) => {
+                        deletable_vars.retain_mut(|(other_var_name, num_usages)| {
+                            if other_var_name == var_name {
+                                *num_usages += 1;
+                            }
+
+                            *num_usages <= 1
+                        });
+                    }
+                    _ => {}
                 }
                 _ => {}
-            }
-            TreeNodeMut::Expr(expr) => match expr {
-                Expr::Dot(var_name, _, _) |
-                Expr::Var(var_name) => {
-                    deletable_vars.retain_mut(|(other_var_name, num_usages)| {
-                        if other_var_name == var_name {
-                            *num_usages += 1;
+            };
+
+            Ok(())
+        });
+
+        let mut var_replacements = Vec::new();
+
+        let _: Result<(), ()> = self.walk_tree_mut_with_options(Options {
+            ordering: RecOrdering::Postorder, ..Default::default()
+        }, &mut |node| {
+            match node {
+                TreeNodeMut::Stmt(stmt) => match stmt {
+                    Stmt::Declare(Binding(var_name, _), _) => {
+                        if deletable_vars.contains(&(var_name.clone(), 0)) {
+                            *stmt = Stmt::Noop
+                        } else if deletable_vars.contains(&(var_name.clone(), 1)) {
+                            let Stmt::Declare(
+                                Binding(var_name, _),
+                                expr
+                            ) = std::mem::replace(stmt, Stmt::Noop) else { unreachable!() };
+                            var_replacements.push((var_name, expr))
                         }
-
-                        *num_usages <= 1
-                    });
-                }
-                _ => {}
-            }
-            _ => {}
-        };
-
-        Ok(())
-    });
-
-    let mut var_replacements = Vec::new();
-
-    let _: Result<(), ()> = block.walk_tree_mut(&mut |node| {
-        match node {
-            TreeNodeMut::Stmt(stmt) => match stmt {
-                Stmt::Declare(Binding(var_name, _), _) => {
-                    if deletable_vars.contains(&(var_name.clone(), 0)) {
-                        *stmt = Stmt::Noop
-                    } else if deletable_vars.contains(&(var_name.clone(), 1)) {
-                        let Stmt::Declare(
-                            Binding(var_name, _),
-                            expr
-                        ) = std::mem::replace(stmt, Stmt::Noop) else { unreachable!() };
-                        var_replacements.push((var_name, expr))
                     }
+                    _ => {}
                 }
-                _ => {}
-            }
-            TreeNodeMut::Expr(expr) => match expr {
-                Expr::Var(var_name) => {
-                    if let Some(index) = var_replacements.iter().position(
-                        |(other_var_name, _)| var_name == other_var_name
-                    ) {
-                        let (_, replacement_expr) = var_replacements.remove(index);
+                TreeNodeMut::Expr(expr) => match expr {
+                    Expr::Var(var_name) => {
+                        if let Some(index) = var_replacements.iter().position(
+                            |(other_var_name, _)| var_name == other_var_name
+                        ) {
+                            let (_, replacement_expr) = var_replacements.remove(index);
 
-                        *expr = replacement_expr;
+                            *expr = replacement_expr;
+                        }
                     }
+                    _ => {}
                 }
                 _ => {}
             }
-            _ => {}
-        }
 
-        Ok(())
-    });
+            Ok(())
+        });
+    }
 }
 
 #[test]
@@ -251,7 +262,7 @@ fn try_out_ops() {
 
     let before = prettify_string(format!("{}", block.clone()));
 
-    block.alpha_convert(&mut Scope::new());
+    block.alpha_convert(&mut IdentScope::new());
 
     let after_alpha = prettify_string(format!("{}", block.clone()));
 
@@ -259,7 +270,7 @@ fn try_out_ops() {
 
     let after_inline = prettify_string(format!("{}", block.clone()));
 
-    cull_single_use_vars(&mut block);
+    block.cull_single_use_vars();
 
     let after_cull = prettify_string(format!("{}", block.clone()));
 

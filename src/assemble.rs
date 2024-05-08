@@ -6,6 +6,7 @@ use crate::tree_walk::{TreeNodeMut, WalkTreeMut};
 
 use anyhow::{anyhow, Context, Result as AnyResult};
 use glam::{Mat4, Vec4};
+use crate::ast_operations::{AlphaConvert, IdentScope};
 
 
 impl Structure {
@@ -98,8 +99,8 @@ impl Structure {
 }
 
 pub struct AssembledStructure {
-    fields: Vec<(String, AssembledField)>,
-    methods: Vec<Method>
+    pub fields: Vec<(String, AssembledField)>,
+    pub methods: Vec<Method>
 }
 
 impl AssembledStructure {
@@ -110,7 +111,15 @@ impl AssembledStructure {
                 .into_iter()
                 .map(|(name, field)| Ok((name, AssembledField::try_from(field).context("Couldn't convert field")?)))
                 .collect::<AnyResult<Vec<(String, AssembledField)>>>()?,
-            methods: structure.assemble_methods(document)?
+            methods: structure.assemble_methods(document)?.into_iter().map(|mut method| {
+                method.body.alpha_convert(&mut IdentScope::new());
+                method.body.inline_blocks();
+
+                println!("Body: {}", method.body);
+                method.body.cull_single_use_vars();
+
+                method
+            }).collect()
         })
     }
 }
@@ -138,7 +147,24 @@ pub enum AssembledField {
     F32(f32),
     Bool(bool),
     Vec4(Vec4),
-    Mat4(Mat4)
+    Mat4(Mat4),
+    Unit,
+}
+
+impl AssembledField {
+    pub fn type_string(&self) -> String {
+        match self {
+            AssembledField::F32(_) => "f32",
+            AssembledField::Bool(_) => "bool",
+            AssembledField::Vec4(_) => "Vec4",
+            AssembledField::Mat4(_) => "Mat4",
+            AssembledField::Unit => "()"
+        }.to_string()
+    }
+
+    pub fn types_match(&self, other: &AssembledField) -> bool {
+        self.type_string() == other.type_string()
+    }
 }
 
 impl TryFrom<Field> for AssembledField {
@@ -161,14 +187,15 @@ impl Display for AssembledField {
             AssembledField::F32(float) => write!(f, "{}", float),
             AssembledField::Bool(b) => write!(f, "{}", b),
             AssembledField::Vec4(v) => write!(f, "{:?}", v),
-            AssembledField::Mat4(m) => write!(f, "{:?}", m)
+            AssembledField::Mat4(m) => write!(f, "{:?}", m),
+            AssembledField::Unit => write!(f, "()")
         }
     }
 }
 
 #[test]
 fn try_assemble_method() {
-    let (document, structure) = get_test_stuff(0, 0);
+    let (document, structure) = get_test_stuff(0, 1);
     println!("Document: {document}\nStructure: {structure}");
 
     let assembled_method = structure.assemble_method(
@@ -181,7 +208,7 @@ fn try_assemble_method() {
     println!("Assembled Method: {}\nAssembled Structure: {}", prettify_string(format!("{assembled_method}")), prettify_string(format!("{assembled_structure}")));
 }
 
-fn get_test_stuff(opt1: usize, opt2: usize) -> (Document, Structure) {
+pub fn get_test_stuff(opt1: usize, opt2: usize) -> (Document, Structure) {
     let doc_str = match opt1 {
         0 => r#"
             interface Proj {
@@ -242,14 +269,14 @@ fn get_test_stuff(opt1: usize, opt2: usize) -> (Document, Structure) {
                 shape1: Sphere4D( radius: 4 ),
                 shape2: Shift(
                     shift: [4, 0, 0, 0],
-                    shape: Plane4D( normal: [1, 0, 0, 0.1] )
+                    shape: Plane4D( normal: [1, 0, 0, 0] )
                 )
             )
         "#,
         1 => r#"
             Shift(
                 shift: [4, 0, 0, 0],
-                shape: Plane4D( normal: [1, 0, 0, 0.1] )
+                shape: Sphere4D( radius: 2 )
             )
         "#,
         _ => ""
