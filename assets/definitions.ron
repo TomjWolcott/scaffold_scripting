@@ -1,4 +1,4 @@
 Shell(
-    offset: Dynamic( id: "hello", default: 3 ),
+    offset: Expr("value - 2"),
     shape: Plane4D( normal: [1, 0, 0, 0] )
 )

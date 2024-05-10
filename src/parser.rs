@@ -1,4 +1,5 @@
 use std::fmt::Display;
+use glam::{Mat4, Vec4};
 use pest::iterators::Pair;
 use pest_derive::Parser;
 use pest::Parser;
@@ -809,8 +810,10 @@ enum Op {
 
 impl Parse for Op {
     fn parse(pair: Pair<Rule>) -> Result<Self, ParseError> {
-        assert_rule!(pair, prec0 | unary | prec1 | prec2);
+        assert_rule!(pair, prec0 | unary | prec1 | prec2 | prec3 | prec4);
         let precedence = match pair.as_rule() {
+            Rule::prec4 => 4,
+            Rule::prec3 => 3,
             Rule::prec2 => 2,
             Rule::prec1 => 1,
             Rule::prec0 => 0,
@@ -825,7 +828,7 @@ impl Parse for Op {
                 let pair = pairs.next().unwrap();
 
                 match pair.as_rule() {
-                    Rule::prec0 | Rule::unary | Rule::prec1 | Rule::prec2 => {
+                    Rule::prec0 | Rule::unary | Rule::prec1 | Rule::prec2 | Rule::prec3 | Rule::prec4 => {
                         Op::Solo(Box::new(Op::parse(pair)?))
                     },
                     _ => {
@@ -905,9 +908,10 @@ pub enum Type {
     Bool,
     F32,
     Vec4,
-    Mat4,
+    Mat4x4,
     Class,
     Auto,
+    Unit
 }
 
 impl Parse for Type {
@@ -918,7 +922,7 @@ impl Parse for Type {
             "bool" => Ok(Self::Bool),
             "f32" => Ok(Self::F32),
             "Vec4" => Ok(Self::Vec4),
-            "Mat4" => Ok(Self::Mat4),
+            "Mat4" => Ok(Self::Mat4x4),
             "Class" => Ok(Self::Class),
             ty => Err(ParseError::TypeNotFound(ty.to_string()))
         }
@@ -931,9 +935,10 @@ impl Display for Type {
             Self::Bool => write!(f, "bool"),
             Self::F32 => write!(f, "f32"),
             Self::Vec4 => write!(f, "Vec4"),
-            Self::Mat4 => write!(f, "Mat4"),
+            Self::Mat4x4 => write!(f, "Mat4"),
             Self::Class => write!(f, "Class"),
-            Self::Auto => write!(f, "Auto")
+            Self::Auto => write!(f, "Auto"),
+            Self::Unit => write!(f, "()")
         }
     }
 }
@@ -941,7 +946,26 @@ impl Display for Type {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Lit {
     F32(f32),
-    Bool(bool)
+    Bool(bool),
+    Vec4(Vec4),
+    Mat4x4(Mat4),
+    Unit
+}
+
+impl Lit {
+    pub fn get_type(&self) -> Type {
+        match self {
+            Self::F32(_) => Type::F32,
+            Self::Bool(_) => Type::Bool,
+            Self::Vec4(_) => Type::Vec4,
+            Self::Mat4x4(_) => Type::Mat4x4,
+            Self::Unit => Type::Unit
+        }
+    }
+
+    pub fn matches_type(&self, other: &Self) -> bool {
+        self.get_type() == other.get_type()
+    }
 }
 
 impl Parse for Lit {
@@ -965,7 +989,10 @@ impl Display for Lit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::F32(num) => write!(f, "{}", num),
-            Self::Bool(b) => write!(f, "{}", b)
+            Self::Bool(b) => write!(f, "{}", b),
+            Self::Vec4(vec) => write!(f, "{}", vec),
+            Self::Mat4x4(mat) => write!(f, "{}", mat),
+            Self::Unit => write!(f, "()")
         }
     }
 }

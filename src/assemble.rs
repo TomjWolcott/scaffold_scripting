@@ -1,15 +1,24 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use crate::parser::{Bound, Document, Expr, Method, MethodKey, parse_document, prettify_string, Stmt};
+use crate::parser::{Bound, Document, Expr, Lit, Method, MethodKey, parse_document, prettify_string, Stmt};
 use crate::structure::{Field, Structure};
 use crate::tree_walk::{TreeNodeMut, WalkTreeMut};
 
 use anyhow::{anyhow, Context, Result as AnyResult};
-use glam::{Mat4, Vec4};
 use crate::ast_operations::{AlphaConvert, IdentScope};
 
 
 impl Structure {
+    pub fn convert_into_instance(&mut self, document: &Document) -> AnyResult<()> {
+        let class = document.get_class(&self.name)?;
+
+        let Some(instance) = &class.instance else { return Ok(()) };
+
+
+
+        Ok(())
+    }
+
     pub fn assemble_fields(&self, dynamic_collector: &mut impl FnMut(&String, &Field)) -> AnyResult<Vec<(String, Field)>> {
         let mut fields = Vec::new();
 
@@ -99,7 +108,8 @@ impl Structure {
 }
 
 pub struct AssembledStructure {
-    pub fields: Vec<(String, AssembledField)>,
+    pub fields: Vec<(String, Lit)>,
+    pub evaluated_fields: Vec<(String, Expr)>,
     pub methods: Vec<Method>
 }
 
@@ -109,8 +119,9 @@ impl AssembledStructure {
             fields: structure
                 .assemble_fields(&mut |_, _| {})?
                 .into_iter()
-                .map(|(name, field)| Ok((name, AssembledField::try_from(field).context("Couldn't convert field")?)))
-                .collect::<AnyResult<Vec<(String, AssembledField)>>>()?,
+                .map(|(name, field)| Ok((name, Lit::try_from(field).context("Couldn't convert field")?)))
+                .collect::<AnyResult<Vec<_>>>()?,
+            evaluated_fields: Vec::new(),
             methods: structure.assemble_methods(document)?.into_iter().map(|mut method| {
                 method.body.alpha_convert(&mut IdentScope::new());
                 method.body.inline_blocks();
@@ -132,6 +143,13 @@ impl Display for AssembledStructure {
             write!(f, "{}: {:?}, ", name, field)?;
         }
 
+        //evaluated fields
+        write!(f, " }} Evaluated Fields: {{ ")?;
+
+        for (name, field) in self.evaluated_fields.iter() {
+            write!(f, "{}: {}, ", name, field)?;
+        }
+
         write!(f, " }} Methods: {{ ")?;
 
         for method in self.methods.iter() {
@@ -142,56 +160,70 @@ impl Display for AssembledStructure {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum AssembledField {
-    F32(f32),
-    Bool(bool),
-    Vec4(Vec4),
-    Mat4(Mat4),
-    Unit,
-}
-
-impl AssembledField {
-    pub fn type_string(&self) -> String {
-        match self {
-            AssembledField::F32(_) => "f32",
-            AssembledField::Bool(_) => "bool",
-            AssembledField::Vec4(_) => "Vec4",
-            AssembledField::Mat4(_) => "Mat4",
-            AssembledField::Unit => "()"
-        }.to_string()
-    }
-
-    pub fn types_match(&self, other: &AssembledField) -> bool {
-        self.type_string() == other.type_string()
-    }
-}
-
-impl TryFrom<Field> for AssembledField {
+impl TryInto<Lit> for Field {
     type Error = anyhow::Error;
 
-    fn try_from(field: Field) -> AnyResult<Self> {
-        match field {
-            Field::F32(f) => Ok(Self::F32(f)),
-            Field::Bool(b) => Ok(Self::Bool(b)),
-            Field::Vec4(v) => Ok(Self::Vec4(v)),
-            Field::Mat4(m) => Ok(Self::Mat4(m)),
-            _ => Err(anyhow!("Field not supported"))
+    fn try_into(self) -> Result<Lit, Self::Error> {
+        match self {
+            Field::F32(f) => Ok(Lit::F32(f)),
+            Field::Bool(b) => Ok(Lit::Bool(b)),
+            Field::Vec4(v) => Ok(Lit::Vec4(v)),
+            Field::Mat4x4(m) => Ok(Lit::Mat4x4(m)),
+            field => Err(anyhow!("{} not supported", field))
         }
     }
 }
 
-impl Display for AssembledField {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            AssembledField::F32(float) => write!(f, "{}", float),
-            AssembledField::Bool(b) => write!(f, "{}", b),
-            AssembledField::Vec4(v) => write!(f, "{:?}", v),
-            AssembledField::Mat4(m) => write!(f, "{:?}", m),
-            AssembledField::Unit => write!(f, "()")
-        }
-    }
-}
+// #[derive(Debug, Clone, PartialEq)]
+// pub enum AssembledField {
+//     F32(f32),
+//     Bool(bool),
+//     Vec4(Vec4),
+//     Mat4x4(Mat4),
+//     Unit,
+// }
+//
+// impl AssembledField {
+//     pub fn type_string(&self) -> String {
+//         match self {
+//             AssembledField::F32(_) => "f32",
+//             AssembledField::Bool(_) => "bool",
+//             AssembledField::Vec4(_) => "Vec4",
+//             AssembledField::Mat4x4(_) => "Mat4",
+//             AssembledField::Unit => "()"
+//         }.to_string()
+//     }
+//
+//     pub fn types_match(&self, other: &AssembledField) -> bool {
+//         self.type_string() == other.type_string()
+//     }
+// }
+//
+// impl TryFrom<Field> for AssembledField {
+//     type Error = anyhow::Error;
+//
+//     fn try_from(field: Field) -> AnyResult<Self> {
+//         match field {
+//             Field::F32(f) => Ok(Self::F32(f)),
+//             Field::Bool(b) => Ok(Self::Bool(b)),
+//             Field::Vec4(v) => Ok(Self::Vec4(v)),
+//             Field::Mat4x4(m) => Ok(Self::Mat4x4(m)),
+//             _ => Err(anyhow!("Field not supported"))
+//         }
+//     }
+// }
+//
+// impl Display for AssembledField {
+//     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+//         match self {
+//             AssembledField::F32(float) => write!(f, "{}", float),
+//             AssembledField::Bool(b) => write!(f, "{}", b),
+//             AssembledField::Vec4(v) => write!(f, "{:?}", v),
+//             AssembledField::Mat4x4(m) => write!(f, "{:?}", m),
+//             AssembledField::Unit => write!(f, "()")
+//         }
+//     }
+// }
 
 #[test]
 fn try_assemble_method() {

@@ -1,5 +1,5 @@
 ident   =  { LETTER ~ (LETTER | NUMBER)* }
-ty      =  { "f32" | "Vec4" | "bool" | "Mat4" | "Class" }
+ty      =  { "f32" | "Vec4" | "bool" | "Mat4x4" | "Class" }
 w       = _{ ("\n" | "\r" | " " | "\t")* }
 binding =  { ident ~ w ~ ":" ~ w ~ ty }
 COMMENT = _{ ("//" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
@@ -34,27 +34,27 @@ stmt  = { (decl | asgn | (expr ~ ";")) }
     decl = { "let" ~ w ~ binding ~ w ~ "=" ~ w ~ expr ~ w ~ ";" }
     asgn = { ident ~ w ~ "=" ~ w ~ expr ~ ";" }
 
-expr = { (prec2) }
+expr = { (prec4) }
     exprs = { "(" ~ w ~ (expr ~ w ~ "," ~ w)* ~ (expr ~ w)? ~ ")" }
     prec0 = { "(" ~ w ~ prec2 ~ w ~ ")" | app | dot | var | lit | block_expr_wrapper }
         app       = { ident ~ w ~ exprs }
         dot       = { ident ~ "." ~ ident ~ exprs }
         var       = { ident }
-        lit       = { (number | bool | vec4 | mat4) }
+        lit       = { (number | bool) }
             bool       = { "true" | "false" }
             number     = { (NUMBER+ ~ "."? ~ NUMBER*) | (NUMBER* ~ "." ~ NUMBER+) }
-            vec4       = { "Vec4" ~ "(" ~
-                w ~ number ~ w ~ "," ~
-                w ~ number ~ w ~ "," ~
-                w ~ number ~ w ~ "," ~
-                w ~ number ~ w ~ ("," ~ w)?
-            ~ ")" }
-            mat4       = { "Mat4" ~ "(" ~
-                w ~ vec4 ~ w ~ "," ~
-                w ~ vec4 ~ w ~ "," ~
-                w ~ vec4 ~ w ~ "," ~
-                w ~ vec4 ~ w ~ ("," ~ w)?
-            ~ ")" }
+//             vec4       = { "Vec4" ~ "(" ~
+//                 w ~ number ~ w ~ "," ~
+//                 w ~ number ~ w ~ "," ~
+//                 w ~ number ~ w ~ "," ~
+//                 w ~ number ~ w ~ ("," ~ w)?
+//             ~ ")" }
+//             mat4       = { "Mat4" ~ "(" ~
+//                 w ~ vec4 ~ w ~ "," ~
+//                 w ~ vec4 ~ w ~ "," ~
+//                 w ~ vec4 ~ w ~ "," ~
+//                 w ~ vec4 ~ w ~ ("," ~ w)?
+//             ~ ")" }
         block_expr = { "{" ~ w ~ (stmt ~ w)* ~ (expr ~ w) ~ "}" }
         block_expr_wrapper = { block_expr }
     unary = { (unary_op ~ w ~ unary | prec0) }
@@ -63,6 +63,10 @@ expr = { (prec2) }
         op1 = { "*" | "/" }
     prec2 = { (prec1 ~ w ~ op2 ~ w ~ prec2) | prec1 }
         op2 = { "+" | "-" }
+    prec3 = { (prec2 ~ w ~ op3 ~ w ~ prec3) | prec2 }
+        op3 = { "&&" | "||" }
+    prec4 = { (prec3 ~ w ~ op4 ~ w ~ prec4) | prec3 }
+        op4 = { "==" | "!=" | "<" | "<=" | ">" | ">=" }
 
 key_val = { ident ~ (w ~ ":" ~ w ~ (instance | expr))? }
 instance = { ident ~ w ~ "{" ~ w ~ (key_val ~ w ~ "," ~ w)* ~ key_val? ~ w ~ "}" }

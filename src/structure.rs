@@ -77,7 +77,7 @@ pub enum Field {
     F32(f32),
     Bool(bool),
     Vec4(Vec4),
-    Mat4(Mat4),
+    Mat4x4(Mat4),
     Dynamic(String, Box<Field>),
     Structure(Box<Structure>)
 }
@@ -89,7 +89,7 @@ impl TryFromRonValue for Field {
             Value::Bool(b) => Ok(Self::Bool(b)),
             Value::Seq(v) => {
                 if let Ok(mat4) = Mat4::try_from_ron_value(Value::Seq(v.clone())) {
-                    Ok(Self::Mat4(mat4))
+                    Ok(Self::Mat4x4(mat4))
                 } else if let Ok(vec4) = Vec4::try_from_ron_value(Value::Seq(v.clone())) {
                     Ok(Self::Vec4(vec4))
                 } else {
@@ -126,7 +126,7 @@ impl Display for Field {
             Self::F32(num) => write!(f, "{}", num),
             Self::Bool(b) => write!(f, "{}", b),
             Self::Vec4(v) => write!(f, "{}", v),
-            Self::Mat4(m) => write!(f, "{}", m),
+            Self::Mat4x4(m) => write!(f, "{}", m),
             Self::Dynamic(id, default) => write!(f, "Dynamic({:?}, {})", id, default),
             Self::Structure(s) => write!(f, "{}", s)
         }

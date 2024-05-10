@@ -19,12 +19,31 @@ interface Proj {
 class Shell {
     offset: f32,
     shape: Class,
-    Proj::proj<shape: proj>(vector: Vec4) -> Vec4 {
+    Proj::proj<shape: Proj>(vector: Vec4) -> Vec4 {
         let proj = shape.proj(vector);
 
         proj + offset * normalize(vector - proj)
     },
-    Sdf::sdf<shape: proj>(vector: Vec4) -> f32 {
+    Sdf::sdf<shape: Sdf>(vector: Vec4) -> f32 {
         abs(shape.sdf(vector)) - offset
+    }
+}
+
+class Wormhole {
+    shape: Class,
+    shift: Vec4,
+    normal: Vec4,
+    radius: f32
+} => Rounding {
+    radius,
+    shape: Subtract {
+        shape1: Shift {
+            shift,
+            shape: HalfPlane {
+                normal,
+                cut: normalize(shift)
+            }
+        },
+        shape2: shape
     }
 }
