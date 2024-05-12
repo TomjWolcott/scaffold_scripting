@@ -380,7 +380,6 @@ impl Eval for Expr {
                     // ("log10", [Lit::F32(f)]) => Ok(Lit::F32(f.log10())),
                     ("abs", &[Lit::F32(f)]) => Ok(Lit::F32(f.abs())),
                     ("abs", &[Lit::Vec4(v)]) => Ok(Lit::Vec4(v.abs())),
-                    ("abs", &[Lit::Mat4x4(m)]) => Ok(Lit::Mat4x4(m.abs())),
                     ("floor", &[Lit::F32(f)]) => Ok(Lit::F32(f.floor())),
                     //ceil
                     ("ceil", &[Lit::F32(f)]) => Ok(Lit::F32(f.ceil())),
