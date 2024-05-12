@@ -1,6 +1,6 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use crate::parser::{Bound, Document, Expr, Instance, KeyVal, Lit, Method, MethodKey, Stmt, Value};
+use crate::parser::{Bound, Document, Expr, Instance, KeyVal, Method, MethodKey, Stmt, Value};
 use crate::structure::{Field, Structure};
 use crate::tree_walk::{TreeNodeMut, WalkTreeMut};
 
@@ -264,7 +264,7 @@ mod tests {
 
     #[test]
     fn try_assemble_instance() {
-        let (document, mut structure) = test_helpers::get_test_stuff(0, 2);
+        let (document, structure) = test_helpers::get_test_stuff(0, 2);
         println!("Document: {document}\nStructure: {structure}");
 
         let assembled_structure = AssembledStructure::new(&document, structure).unwrap();

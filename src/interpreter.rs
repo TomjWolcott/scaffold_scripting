@@ -1,7 +1,7 @@
 use std::fmt::Display;
 use glam::{Mat4, Vec4};
 use crate::assemble::AssembledStructure;
-use crate::parser::{Binding, Block, Expr, Lit, Method, Stmt};
+use crate::parser::{Binding, Block, Expr, Lit, Stmt};
 use anyhow::{anyhow, Context, Result as AnyResult};
 
 pub trait IntoArgs {

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result as AnyResult};
+use anyhow::{anyhow, Result as AnyResult};
 use crate::parser::*;
 
 const TAB: &'static str = "    ";
@@ -101,7 +101,6 @@ impl ToWgsl for Expr {
 #[cfg(test)]
 mod tests {
     use crate::assemble::AssembledStructure;
-    use crate::test_helpers;
     use super::*;
     use crate::test_helpers::*;
 
