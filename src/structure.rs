@@ -1,9 +1,10 @@
 use ron::{from_str, Map, Value};
-use glam::{bool, f32, Mat4, Vec4};
+use glam::{f32, Mat4, Vec4};
 use std::fmt::{Display, Formatter};
 use std::fmt;
 use lazy_static::lazy_static;
 use regex::Regex;
+use crate::parser::{Expr, Lit, parse_expr, ParseError};
 
 #[derive(Debug)]
 pub enum FromRonError {
@@ -13,7 +14,8 @@ pub enum FromRonError {
     BadSeq(Vec<Value>),
     BadFieldValue(Value),
     NotSeq(Value),
-    DynamicIsMissingFields(Map)
+    DynamicIsMissingFields(Map),
+    ParseExprErr(ParseError),
 }
 
 pub trait TryFromRonValue where Self: Sized {
@@ -29,7 +31,7 @@ pub struct Structure {
 impl Structure {
     pub fn get_field(&self, name: impl AsRef<str>) -> Option<&Field> {
         self.fields.iter()
-            .find(|(field_name, _)| field_name == name.as_ref())
+            .find(|(field_name, _)| field_name.as_str() == name.as_ref())
             .map(|(_, field)| field)
     }
 
@@ -74,42 +76,31 @@ impl Display for Structure {
 
 #[derive(Debug, Clone)]
 pub enum Field {
-    F32(f32),
-    Bool(bool),
-    Vec4(Vec4),
-    Mat4x4(Mat4),
-    Dynamic(String, Box<Field>),
+    Expr(Expr),
     Structure(Box<Structure>)
 }
 
 impl TryFromRonValue for Field {
     fn try_from_ron_value(value: Value) -> ron::Result<Self, FromRonError> {
         match value {
-            Value::Number(num) => Ok(Self::F32(num.into_f64() as f32)),
-            Value::Bool(b) => Ok(Self::Bool(b)),
+            Value::Number(num) => Ok(Self::Expr(Expr::Lit(Lit::F32(num.into_f64() as f32)))),
+            Value::Bool(b) => Ok(Self::Expr(Expr::Lit(Lit::Bool(b)))),
             Value::Seq(v) => {
                 if let Ok(mat4) = Mat4::try_from_ron_value(Value::Seq(v.clone())) {
-                    Ok(Self::Mat4x4(mat4))
+                    Ok(Self::Expr(Expr::Lit(Lit::Mat4x4(mat4))))
                 } else if let Ok(vec4) = Vec4::try_from_ron_value(Value::Seq(v.clone())) {
-                    Ok(Self::Vec4(vec4))
+                    Ok(Self::Expr(Expr::Lit(Lit::Vec4(vec4))))
                 } else {
                     Err(FromRonError::BadSeq(v))
                 }
             },
             Value::Map(m) => {
-                if Some(&Value::String("Dynamic".to_string())) != m.get(&Value::String("__struct_name".to_string())) {
+                if Some(&Value::String("Expr".to_string())) != m.get(&Value::String("__struct_name".to_string())) {
                     Ok(Self::Structure(Box::new(Structure::try_from_ron_value(Value::Map(m))?)))
-                } else if let (
-                    Some(Value::String(id)),
-                    Some(value)
-                ) = (
-                    m.get(&Value::String("id".to_string())),
-                    m.get(&Value::String("default".to_string())),
-                ) {
-                    Ok(Self::Dynamic(
-                        id.clone(),
-                        Box::new(Field::try_from_ron_value(value.clone())?)
-                    ))
+
+                } else if let Some(Value::String(expr)) = m.get(&Value::String("expr".to_string())) {
+                    Ok(Self::Expr(parse_expr(expr).map_err(|err| FromRonError::ParseExprErr(err))?))
+
                 } else {
                     Err(FromRonError::DynamicIsMissingFields(m))
                 }
@@ -123,12 +114,8 @@ impl TryFromRonValue for Field {
 impl Display for Field {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            Self::F32(num) => write!(f, "{}", num),
-            Self::Bool(b) => write!(f, "{}", b),
-            Self::Vec4(v) => write!(f, "{}", v),
-            Self::Mat4x4(m) => write!(f, "{}", m),
-            Self::Dynamic(id, default) => write!(f, "Dynamic({:?}, {})", id, default),
-            Self::Structure(s) => write!(f, "{}", s)
+            Field::Expr(expr) => write!(f, "{}", expr),
+            Field::Structure(structure) => write!(f, "{}", structure)
         }
     }
 }
@@ -203,42 +190,56 @@ impl TryFromRonValue for Mat4 {
 
 pub fn ron_preprocess(string: String) -> String {
     lazy_static! {
+        static ref EXPR_NAME_MATCH: Regex = Regex::new(r"Expr\(").unwrap();
         static ref STRUCT_NAME_MATCH: Regex = Regex::new(r"(\p{L}[\p{L}0-9]*)\(").unwrap();
     }
 
-    STRUCT_NAME_MATCH.replace_all(string.as_str(), "(__struct_name: \"$1\",").to_string()
+    STRUCT_NAME_MATCH.replace_all(
+        EXPR_NAME_MATCH.replace_all(
+            string.as_str(),
+            "(__struct_name: \"Expr\", expr: "
+        ).as_ref(),
+        "(__struct_name: \"$1\","
+    ).to_string()
 }
 
-#[test]
-fn test_ronny() {
-    let ron = std::fs::read_to_string("assets/definitions.ron").unwrap();
+#[cfg(test)]
+mod tests {
+    use ron::{from_str, Value};
+    use crate::structure::{ron_preprocess, Structure, TryFromRonValue};
 
-    let val: Value = from_str(ron_preprocess(ron).as_str()).unwrap();
+    #[test]
+    fn test_ronny() {
+        let ron = std::fs::read_to_string("assets/definitions.ron").unwrap();
 
-    let structure = Structure::try_from_ron_value(val).unwrap();
+        let val: Value = from_str(ron_preprocess(ron).as_str()).unwrap();
 
-    println!("Structure:\n{}", structure);
-}
+        let structure = Structure::try_from_ron_value(val).unwrap();
 
-#[test]
-fn test_preprocess() {
-    let input = r#"
+        println!("Structure:\n{}", structure);
+    }
+
+    #[test]
+    fn test_preprocess() {
+        let input = r#"
         Container(
             manifold: Shell(
-                offset: 0.0,
+                offset: Expr("7 * abc - 2"),
                 shape: Plane4D( normal: [1, 0, 0, 0] )
             )
         )
     "#;
 
-    let expected = r#"
+        let expected = r#"
         (__struct_name: "Container",
             manifold: (__struct_name: "Shell",
-                offset: 0.0,
+                offset: (__struct_name: "Expr", expr: "7 * abc - 2"),
                 shape: (__struct_name: "Plane4D", normal: [1, 0, 0, 0] )
             )
         )
     "#;
 
-    assert_eq!(ron_preprocess(input.to_string()), expected.to_string());
+        assert_eq!(ron_preprocess(input.to_string()), expected.to_string());
+    }
 }
+

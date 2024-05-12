@@ -5,3 +5,4 @@ mod tree_walk;
 mod ast_operations;
 mod interpreter;
 mod to_wgsl;
+pub mod test_helpers;

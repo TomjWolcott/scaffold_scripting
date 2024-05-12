@@ -689,6 +689,11 @@ impl Display for Stmt {
     }
 }
 
+pub fn parse_expr(script: impl AsRef<str>) -> Result<Expr, ParseError> {
+    let mut parsed = ScaffoldParser::parse(Rule::expr, script.as_ref()).unwrap();
+    Expr::parse(parsed.next().unwrap())
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
     BinExpr(Box<Expr>, String, Box<Expr>),
@@ -914,6 +919,19 @@ pub enum Type {
     Unit
 }
 
+impl Type {
+    pub fn wgsl_type(&self) -> String {
+        match self {
+            Self::Bool => "bool".to_string(),
+            Self::F32 => "f32".to_string(),
+            Self::Vec4 => "vec4".to_string(),
+            Self::Mat4x4 => "mat4x4".to_string(),
+            _ => panic!("(Type::wgsl_type) Unsupported type: {:?}", self)
+
+        }
+    }
+}
+
 impl Parse for Type {
     fn parse(pair: Pair<Rule>) -> Result<Self, ParseError> {
         assert_rule!(pair, ty);
@@ -1094,10 +1112,16 @@ impl Display for Value {
     }
 }
 
-#[test]
-fn test_pest() {
-    let script =
-        r#"
+#[cfg(test)]
+mod tests {
+    use pest::Parser;
+    use crate::parser::{Document, Parse, Rule, ScaffoldParser};
+    use crate::test_helpers;
+
+    #[test]
+    fn test_pest() {
+        let script =
+            r#"
             interface Sdf {
                 sdf(vector: Vec4) -> f32,
                 grad(vector: Vec4) -> Vec4 {
@@ -1138,61 +1162,16 @@ fn test_pest() {
             }
         "#;
 
-    let mut parsed = ScaffoldParser::parse(Rule::document, script).unwrap();
-    let document = Document::parse(parsed.next().unwrap()).unwrap();
-    let string = prettify_string(format!("{document}"));
-    let implementations = document
-        .get_class("Shell")
-        .unwrap()
-        .get_implementations(document.get_interface("Sdf").unwrap());
+        let mut parsed = ScaffoldParser::parse(Rule::document, script).unwrap();
+        let document = Document::parse(parsed.next().unwrap()).unwrap();
+        let string = test_helpers::prettify_string(format!("{document}"));
+        let implementations = document
+            .get_class("Shell")
+            .unwrap()
+            .get_implementations(document.get_interface("Sdf").unwrap());
 
-    println!("impls:\n{}\n\n", implementations.unwrap().iter().map(|x| format!("{x}")).collect::<Vec<_>>().join("\n"));
+        println!("impls:\n{}\n\n", implementations.unwrap().iter().map(|x| format!("{x}")).collect::<Vec<_>>().join("\n"));
 
-    println!("{}", string);
-}
-
-pub fn prettify_string(mut string: String) -> String {
-    let mut brace_depth = 0;
-    let mut paren_depth = 0;
-    let mut i = 0;
-    let mut insert_newline = false;
-    const TAB: &'static str = "    ";
-
-    while i < string.len() {
-        let owned = string[i..i+1].to_string();
-        let slice = &owned[..];
-
-        match slice {
-            "}" => {
-                brace_depth -= 1;
-                insert_newline = true;
-            },
-            "," | "=" => insert_newline = false,
-            _ => {}
-        };
-
-        if paren_depth < 1 && insert_newline && slice != " " {
-            if brace_depth == 0 && slice == "c" {
-                string.insert_str(i, "\n");
-                i += 1;
-            }
-            let inserted_str = format!("\n{}", TAB.repeat(brace_depth));
-            string.insert_str(i, inserted_str.as_str());
-            i += inserted_str.len();
-        }
-
-        match slice {
-            "{" => {brace_depth += 1; insert_newline = true},
-            "," => insert_newline = !insert_newline,
-            ";" => insert_newline = true,
-            "(" => {paren_depth += 1; insert_newline = false},
-            ")" => {paren_depth -= 1; insert_newline = false},
-            " " => {},
-            _ => insert_newline = false
-        };
-
-        i += 1;
+        println!("{}", string);
     }
-
-    string
 }

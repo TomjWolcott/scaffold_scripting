@@ -1,6 +1,7 @@
+use std::fmt::Display;
 use glam::{Mat4, Vec4};
-use crate::assemble::{Lit, AssembledStructure, get_test_stuff};
-use crate::parser::{Binding, Block, Expr, Lit, Method, parse_block, prettify_string, Stmt};
+use crate::assemble::AssembledStructure;
+use crate::parser::{Binding, Block, Expr, Lit, Method, Stmt};
 use anyhow::{anyhow, Context, Result as AnyResult};
 
 pub trait IntoArgs {
@@ -16,9 +17,9 @@ impl IntoArgs for Vec<Lit> {
 macro_rules! impl_into_args {
     ($($ty:ident),*) => {
         #[allow(non_camel_case_types)]
-        impl<$($ty : Into<Lit>),*> IntoArgs for ($($ty),*) {
+        impl<$($ty : Into<Lit>),*> IntoArgs for ($($ty,)*) {
             fn into_args(self) -> Vec<Lit> {
-                let ( $($ty),* ) = self;
+                let ( $($ty,)* ) = self;
 
                 vec![ $( $ty .into() ),* ]
             }
@@ -26,7 +27,12 @@ macro_rules! impl_into_args {
     };
 }
 
-impl_into_args!();
+impl<T: Into<Lit>> IntoArgs for T {
+    fn into_args(self) -> Vec<Lit> {
+        vec![self.into()]
+    }
+}
+
 impl_into_args!(a);
 impl_into_args!(a, b);
 impl_into_args!(a, b, c);
@@ -132,64 +138,105 @@ impl From<()> for Lit {
 
 }
 
-struct Scope(Vec<(String, Lit)>);
+#[derive(Debug, Clone)]
+pub struct Scope(Vec<(String, Lit)>);
 
 impl Scope {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self(Vec::new())
     }
 
-    fn get(&self, name: impl AsRef<str>) -> Option<&Lit> {
+    pub fn get(&self, name: impl AsRef<str>) -> Option<&Lit> {
         self.0.iter().find(|(n, _)| n.as_str() == name.as_ref()).map(|(_, field)| field)
     }
 
-    fn get_mut(&mut self, name: impl AsRef<str>) -> Option<&mut Lit> {
+    pub fn get_mut(&mut self, name: impl AsRef<str>) -> Option<&mut Lit> {
         self.0.iter_mut().find(|(n, _)| n.as_str() == name.as_ref()).map(|(_, field)| field)
     }
 
-    fn push(&mut self, name: String, field: Lit) {
+    pub fn push(&mut self, name: String, field: Lit) {
         self.0.push((name, field));
+    }
+
+    pub fn size(&self) -> usize {
+       self.0.len()
+    }
+
+    pub fn resize(&mut self, size: usize) {
+        self.0.splice(size.., []);
+    }
+}
+
+impl Display for Scope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{ ")?;
+
+        for (name, field) in self.0.iter() {
+            write!(f, "{}: {}, ", name, field)?;
+        }
+
+        write!(f, " }}")
     }
 }
 
 impl AssembledStructure {
     pub fn eval_method<OUT: TryFrom<Lit, Error=anyhow::Error>>(&self, method_name: impl AsRef<str>, args: impl IntoArgs) -> AnyResult<OUT> {
-        let method = self.methods.iter()
-            .find(|Method { name, .. } | name.as_str() == method_name.as_ref())
+        let method = self.get_method(&method_name)
             .with_context(|| format!("Could not find method {}", method_name.as_ref()))?;
 
-        let mut scope = Scope(self.fields.clone());
-
-        for (name, expr) in self.evaluated_fields.iter() {
-            // If these evals push to the scope that might be a bit wacky
-            scope.push(name.clone(), expr.eval(&mut scope)?);
-        }
+        let mut scope = self.evaluated_scope.clone();
 
         for (Binding(name, _), field) in method.inputs.iter().zip(args.into_args().into_iter()) {
             scope.push(name.clone(), field);
         }
 
-        scope.0.append(&mut self.fields.clone());
-
         Ok(method.body.eval(&mut scope)?.try_into()?)
     }
+
+    // pub fn eval_method<OUT: TryFrom<Lit, Error=anyhow::Error>>(&mut self, method_name: impl AsRef<str>, args: impl IntoArgs) -> AnyResult<OUT> {
+    //     let scope =
+    //
+    //     let method = self.get_method(&method_name)
+    //         .with_context(|| format!("Could not find method {}", method_name.as_ref()))?;
+    //
+    //     let scope_size = self.evaluated_scope.size();
+    //
+    //     for (
+    //         Binding(name, _),
+    //         field
+    //     ) in method.inputs.iter().zip(args.into_args().into_iter()) {
+    //         self.evaluated_scope.push(name.clone(), field);
+    //     }
+    //
+    //     let output_result = method.body.eval(&mut self.evaluated_scope);
+    //
+    //     self.evaluated_scope.resize(scope_size);
+    //
+    //     Ok(output_result?.try_into()?)
+    // }
 }
 
-trait Eval {
+pub trait Eval {
     fn eval(&self, scope: &mut Scope) -> AnyResult<Lit>;
 }
 
 impl Eval for Block {
     fn eval(&self, scope: &mut Scope) -> AnyResult<Lit> {
+        let scope_size = scope.size();
+
         for stmt in self.0.iter() {
             stmt.eval(scope)?;
         }
 
-        if let Some(expr) = &self.1 {
+        let return_value = if let Some(expr) = &self.1 {
             Ok(expr.eval(scope)?)
         } else {
             Ok(Lit::Unit)
-        }
+        };
+
+        scope.resize(scope_size);
+
+        return_value
     }
 }
 
@@ -204,12 +251,12 @@ impl Eval for Stmt {
                 let eval_field = expr.eval(scope)?;
                 let field = scope.get_mut(var).with_context(|| format!("var {var} not found in scope"))?;
 
-                if field.types_match(&eval_field) {
+                if field.matches_type(&eval_field) {
                     *field = eval_field;
                 } else {
                     return Err(anyhow!(
                         "Types do not match: {} and {} when assigning var {var}",
-                        field.type_string(), eval_field.type_string()
+                        field.get_type(), eval_field.get_type()
                     ));
                 }
             }
@@ -258,7 +305,7 @@ impl Eval for Expr {
 
                     (f1, symbol, f2) => Err(anyhow!(
                         "Could not find binary operation with signature {} {} {}",
-                        f1.type_string(), symbol, f2.type_string()
+                        f1.get_type(), symbol, f2.get_type()
                     ))
                 }
             Expr::UnaryExpr(symbol, right) => {
@@ -273,7 +320,7 @@ impl Eval for Expr {
 
                     (symbol, right) => Err(anyhow!(
                         "Could not find unary operation with signature {} {}",
-                        symbol, right.type_string()
+                        symbol, right.get_type()
                     ))
                 }
             }
@@ -344,8 +391,8 @@ impl Eval for Expr {
                     ("trunc", &[Lit::Vec4(v)]) => Ok(Lit::Vec4(v.trunc())),
 
                     ("select", [x_false, x_true, Lit::Bool(condition)]) => {
-                        if !x_false.types_match(x_true) {
-                            Err(anyhow!("Types do not match in select for {} and {}", x_false.type_string(), x_true.type_string()))
+                        if !x_false.matches_type(x_true) {
+                            Err(anyhow!("Types do not match in select for {} and {}", x_false.get_type(), x_true.get_type()))
                         } else if *condition {
                             Ok(x_true.clone())
                         } else {
@@ -355,39 +402,55 @@ impl Eval for Expr {
 
                     (fn_name, inputs) => Err(anyhow!(
                         "Could not find signature {fn_name}({})",
-                        inputs.iter().map(|input| input.type_string()).collect::<Vec<_>>().join(", ")
+                        inputs.iter().map(|input| format!("{}", input.get_type())).collect::<Vec<_>>().join(", ")
                     ))
                 }
             },
             Expr::Dot(_, _, _) => Err(anyhow!("EVAL NOT SUPPORTED FOR DOT")),
-            Expr::Var(var) => Ok(scope.get(var).with_context(|| format!("var {var} not found in scope"))?.clone()),
-            Expr::Lit(lit) => match lit {
-                Lit::F32(f) => Ok(Lit::F32(*f)),
-                Lit::Bool(b) => Ok(Lit::Bool(*b))
-            }
+            Expr::Var(var) => match var.as_str() {
+                "X" => Ok(Lit::Vec4(Vec4::X)),
+                "Y" => Ok(Lit::Vec4(Vec4::Y)),
+                "Z" => Ok(Lit::Vec4(Vec4::Z)),
+                "W" => Ok(Lit::Vec4(Vec4::W)),
+                "ONES" => Ok(Lit::Vec4(Vec4::ONE)),
+                "PI" => Ok(Lit::F32(std::f32::consts::PI)),
+                "E" => Ok(Lit::F32(std::f32::consts::E)),
+                "IDENTITY" => Ok(Lit::Mat4x4(Mat4::IDENTITY)),
+                var_string => scope.get(var_string).with_context(|| format!("var {var} not found in scope")).cloned()
+            },
+            Expr::Lit(lit) => Ok(lit.clone()),
             Expr::Block(block) => block.eval(scope)
         }
     }
 }
 
-#[test]
-fn try_eval_block() {
-    let block = parse_block(r#"{
+#[cfg(test)]
+mod tests {
+    use glam::Vec4;
+    use crate::assemble::AssembledStructure;
+    use crate::interpreter::{Eval, Scope};
+    use crate::parser::parse_block;
+    use crate::test_helpers::{get_test_stuff, prettify_string};
+
+    #[test]
+    fn try_eval_block() {
+        let block = parse_block(r#"{
         let x: f32 = 4;
         select(x + 2, 2, x < x + 1)
     }"#).unwrap();
 
-    println!("Eval: {}", f32::try_from(block.eval(&mut Scope::new()).unwrap()).unwrap())
-}
+        println!("Eval: {}", f32::try_from(block.eval(&mut Scope::new()).unwrap()).unwrap())
+    }
 
-#[test]
-fn try_eval() {
-    let (document, structure) = get_test_stuff(0, 1);
-    println!("Document: {document}\nStructure: {structure}");
+    #[test]
+    fn try_eval() {
+        let (document, structure) = get_test_stuff(0, 1);
+        println!("Document: {document}\nStructure: {structure}");
 
-    let assembled_structure = AssembledStructure::new(&document, structure).unwrap();
+        let assembled_structure = AssembledStructure::new(&document, structure).unwrap();
 
-    println!("Assembled Structure: {}", prettify_string(format!("{assembled_structure}")));
+        println!("Assembled Structure: {}", prettify_string(format!("{assembled_structure}")));
 
-    println!("result: {}", assembled_structure.eval_method::<Vec4>("proj", 5.0 * Vec4::X + Vec4::Y).unwrap())
+        println!("result: {}", assembled_structure.eval_method::<Vec4>("proj", 5.0 * Vec4::X + Vec4::Y).unwrap())
+    }
 }

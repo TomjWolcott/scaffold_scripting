@@ -1,49 +1,61 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use crate::parser::{Bound, Document, Expr, Lit, Method, MethodKey, parse_document, prettify_string, Stmt};
+use crate::parser::{Bound, Document, Expr, Instance, KeyVal, Lit, Method, MethodKey, Stmt, Value};
 use crate::structure::{Field, Structure};
 use crate::tree_walk::{TreeNodeMut, WalkTreeMut};
 
 use anyhow::{anyhow, Context, Result as AnyResult};
 use crate::ast_operations::{AlphaConvert, IdentScope};
+use crate::interpreter::{Eval, Scope};
 
 
 impl Structure {
-    pub fn convert_into_instance(&mut self, document: &Document) -> AnyResult<()> {
-        let class = document.get_class(&self.name)?;
+    fn get_instance_structure(&self, document: &Document) -> AnyResult<Structure> {
+        let class = document.get_class(&self.name).context("Couldn't find class")?;
 
-        let Some(instance) = &class.instance else { return Ok(()) };
+        let instance = class.instance.as_ref().context("No instance found")?;
 
-
-
-        Ok(())
+        Ok(self.create_instance(instance))
     }
 
-    pub fn assemble_fields(&self, dynamic_collector: &mut impl FnMut(&String, &Field)) -> AnyResult<Vec<(String, Field)>> {
+    fn create_instance(&self, instance: &Instance) -> Structure {
+        let fields = instance.key_vals.iter().map(|KeyVal { key, value }| {
+            (key.clone(), match value {
+                Value::Expr(Expr::Var(var_name)) => {
+                    if let Some(Field::Structure(structure)) = self.get_field(var_name) {
+                        Field::Structure(structure.clone())
+                    } else {
+                        Field::Expr(Expr::Var(var_name.clone()))
+                    }
+                },
+                Value::Expr(expr) => Field::Expr(expr.clone()),
+                Value::Instance(sub_instance) => Field::Structure(Box::new(self.create_instance(sub_instance)))
+            })
+        }).collect();
+
+        Structure { name: instance.name.clone(), fields }
+    }
+
+    fn assemble_fields(self) -> AnyResult<Vec<(String, Expr)>> {
         let mut fields = Vec::new();
 
-        for (field_name, field) in self.fields.iter() {
+        for (field_name, field) in self.fields {
             match field {
-                Field::Dynamic(id, real_field) => {
-                    dynamic_collector(id, real_field);
-
-                    fields.push((field_name.clone(), *real_field.clone()))
-                }
+                Field::Expr(expr) => fields.push((field_name, expr)),
                 Field::Structure(structure) => {
-                    let structure_fields = structure.assemble_fields(dynamic_collector)?;
+                    let structure_fields = structure.assemble_fields()?;
 
                     fields.append(&mut structure_fields.into_iter().map(
-                        |(other_field_name, field)| (format!("__{}__{}", field_name, other_field_name), field)
+                        |(other_field_name, expr)| (format!("__{}__{}", field_name, other_field_name), expr)
                     ).collect::<Vec<_>>())
                 }
-                _ => fields.push((field_name.clone(), field.clone()))
             }
         }
 
         Ok(fields)
     }
 
-    pub fn assemble_methods(&self, document: &Document) -> AnyResult<Vec<Method>> {
+    fn assemble_methods(&self, document: &Document) -> AnyResult<Vec<Method>> {
         let mut methods = Vec::new();
         let class = document.get_class(&self.name).context("Couldn't find class")?;
 
@@ -57,8 +69,16 @@ impl Structure {
         Ok(methods)
     }
 
-    pub fn assemble_method(&self, document: &Document, method_key: MethodKey) -> AnyResult<Method> {
-        self.assemble_method_rec(document, method_key, "".to_string())
+    /// Assembles a method to inline trait fn calls and perform some small optimizations
+    fn assemble_method(&self, document: &Document, method_key: MethodKey) -> AnyResult<Method> {
+        self.assemble_method_rec(document, method_key, "".to_string()).map(|mut method| {
+            method.body.alpha_convert(&mut IdentScope::new());
+            method.body.inline_blocks();
+            method.body.cull_single_use_vars();
+            method.body.cull_noops();
+
+            method
+        })
     }
 
     fn assemble_method_rec(&self, document: &Document, method_key: MethodKey, id: String) -> AnyResult<Method> {
@@ -108,30 +128,42 @@ impl Structure {
 }
 
 pub struct AssembledStructure {
-    pub fields: Vec<(String, Lit)>,
-    pub evaluated_fields: Vec<(String, Expr)>,
+    pub fields: Vec<(String, Expr)>,
+    pub evaluated_scope: Scope,
     pub methods: Vec<Method>
 }
 
 impl AssembledStructure {
-    pub fn new(document: &Document, structure: Structure) -> AnyResult<Self> {
+    pub fn new(document: &Document, mut structure: Structure) -> AnyResult<Self> {
+        let mut fields = Vec::new();
+
+        if let Ok(instance_structure) = structure.get_instance_structure(document) {
+            fields = structure.assemble_fields()?;
+            structure = instance_structure;
+        }
+
+        let methods = structure.assemble_methods(document)?;
+        fields.append(&mut structure.assemble_fields()?);
+
         Ok(Self {
-            fields: structure
-                .assemble_fields(&mut |_, _| {})?
-                .into_iter()
-                .map(|(name, field)| Ok((name, Lit::try_from(field).context("Couldn't convert field")?)))
-                .collect::<AnyResult<Vec<_>>>()?,
-            evaluated_fields: Vec::new(),
-            methods: structure.assemble_methods(document)?.into_iter().map(|mut method| {
-                method.body.alpha_convert(&mut IdentScope::new());
-                method.body.inline_blocks();
-
-                println!("Body: {}", method.body);
-                method.body.cull_single_use_vars();
-
-                method
-            }).collect()
+            fields,
+            evaluated_scope: Scope::new(),
+            methods
         })
+    }
+
+    pub fn evaluate_fields(&mut self, mut scope: Scope) -> AnyResult<()> {
+        self.evaluated_scope = Scope::new();
+
+        for (name, expr) in self.fields.iter() {
+            self.evaluated_scope.push(name.clone(), expr.eval(&mut scope)?);
+        }
+
+        Ok(())
+    }
+
+    pub fn get_method(&self, name: impl AsRef<str>) -> Option<&Method> {
+        self.methods.iter().find(|method| method.name.as_str() == name.as_ref())
     }
 }
 
@@ -139,38 +171,21 @@ impl Display for AssembledStructure {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "Fields: {{ ")?;
 
-        for (name, field) in self.fields.iter() {
-            write!(f, "{}: {:?}, ", name, field)?;
+        for (name, expr) in self.fields.iter() {
+            write!(f, "{}: {}, ", name, expr)?;
         }
 
-        //evaluated fields
-        write!(f, " }} Evaluated Fields: {{ ")?;
+        //evaluated scope
 
-        for (name, field) in self.evaluated_fields.iter() {
-            write!(f, "{}: {}, ", name, field)?;
-        }
+        write!(f, " }} Evaluated Scope: {}", self.evaluated_scope)?;
 
-        write!(f, " }} Methods: {{ ")?;
+        write!(f, " Methods: {{ ")?;
 
         for method in self.methods.iter() {
             write!(f, "{}, ", method)?;
         }
 
         write!(f, " }}")
-    }
-}
-
-impl TryInto<Lit> for Field {
-    type Error = anyhow::Error;
-
-    fn try_into(self) -> Result<Lit, Self::Error> {
-        match self {
-            Field::F32(f) => Ok(Lit::F32(f)),
-            Field::Bool(b) => Ok(Lit::Bool(b)),
-            Field::Vec4(v) => Ok(Lit::Vec4(v)),
-            Field::Mat4x4(m) => Ok(Lit::Mat4x4(m)),
-            field => Err(anyhow!("{} not supported", field))
-        }
     }
 }
 
@@ -225,96 +240,35 @@ impl TryInto<Lit> for Field {
 //     }
 // }
 
-#[test]
-fn try_assemble_method() {
-    let (document, structure) = get_test_stuff(0, 1);
-    println!("Document: {document}\nStructure: {structure}");
+#[cfg(test)]
+mod tests {
+    use crate::assemble::AssembledStructure;
+    use crate::parser::MethodKey;
+    use crate::test_helpers;
+    use crate::test_helpers::{better_prettify, prettify_string};
 
-    let assembled_method = structure.assemble_method(
-        &document,
-        MethodKey::new(Some("Proj"), "proj")
-    ).unwrap();
+    #[test]
+    fn try_assemble_method() {
+        let (document, structure) = test_helpers::get_test_stuff(0, 1);
+        println!("Document: {document}\nStructure: {structure}");
 
-    let assembled_structure = AssembledStructure::new(&document, structure).unwrap();
+        let assembled_method = structure.assemble_method(
+            &document,
+            MethodKey::new(Some("Proj"), "proj")
+        ).unwrap();
 
-    println!("Assembled Method: {}\nAssembled Structure: {}", prettify_string(format!("{assembled_method}")), prettify_string(format!("{assembled_structure}")));
-}
+        let assembled_structure = AssembledStructure::new(&document, structure).unwrap();
 
-pub fn get_test_stuff(opt1: usize, opt2: usize) -> (Document, Structure) {
-    let doc_str = match opt1 {
-        0 => r#"
-            interface Proj {
-                proj(vector: Vec4) -> Vec4
-            }
+        println!("Assembled Method: {}\nAssembled Structure: {}", prettify_string(format!("{assembled_method}")), prettify_string(format!("{assembled_structure}")));
+    }
 
-            interface Sdf {
-                sdf(vector: Vec4) -> f32
-            }
+    #[test]
+    fn try_assemble_instance() {
+        let (document, mut structure) = test_helpers::get_test_stuff(0, 2);
+        println!("Document: {document}\nStructure: {structure}");
 
-            class Sphere4D {
-                radius: f32,
-                Proj::proj(vector: Vec4) -> Vec4 {
-                    radius * normalize(vector)
-                },
-                Sdf::sdf(vector: Vec4) -> f32 {
-                    length(vector) - radius
-                }
-            }
+        let assembled_structure = AssembledStructure::new(&document, structure).unwrap();
 
-            class Plane4D {
-                normal: Vec4,
-                Proj::proj(vector: Vec4) -> Vec4 {
-                    vector - dot(vector, normal) * normal
-                },
-                Sdf::sdf(vector: Vec4) -> f32 {
-                    dot(vector, normal)
-                }
-            }
-
-            class Shift {
-                shift: Vec4,
-                shape: Class,
-                Proj::proj<shape: Proj>(vector: Vec4) -> Vec4 {
-                    shape.proj(vector - shift) + shift
-                },
-                Sdf::sdf<shape: Sdf>(vector: Vec4) -> f32 {
-                    shape.sdf(vector - shift)
-                }
-            }
-
-            class Union {
-                shape1: Class,
-                shape2: Class,
-                Proj::proj<shape1: Proj + Sdf, shape2: Proj + Sdf>(vector: Vec4) -> Vec4 {
-                    shape1.proj((5 + shape2.sdf(vector)) * shape2.proj(vector)) * shape1.sdf(vector)
-                }
-            }
-        "#,
-        _ => ""
-    }.to_string();
-
-    let document = parse_document(&doc_str).unwrap();
-
-    let structure_str = match opt2 {
-        0 => r#"
-            Union(
-                shape1: Sphere4D( radius: 4 ),
-                shape2: Shift(
-                    shift: [4, 0, 0, 0],
-                    shape: Plane4D( normal: [1, 0, 0, 0] )
-                )
-            )
-        "#,
-        1 => r#"
-            Shift(
-                shift: [4, 0, 0, 0],
-                shape: Sphere4D( radius: 2 )
-            )
-        "#,
-        _ => ""
-    };
-
-    let structure = Structure::from_ron_string(structure_str).unwrap();
-
-    (document, structure)
+        println!("Assembled not pretty: {assembled_structure}\nAssembled Structure: {}", better_prettify(format!("{assembled_structure}")));
+    }
 }

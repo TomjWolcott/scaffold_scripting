@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::parser::*;
+use crate::test_helpers::prettify_string;
 use crate::tree_walk::{Options, RecOrdering, TreeNodeMut, WalkTreeMut};
 
 //   I know I'm doing A LOT of cloning by using Vec, but the scope won't ever really get that big,
@@ -239,6 +240,16 @@ impl Block {
                     _ => {}
                 }
                 _ => {}
+            }
+
+            Ok(())
+        });
+    }
+
+    pub fn cull_noops(&mut self) {
+        let _: Result<(), ()> = self.walk_tree_mut(&mut |node| {
+            if let TreeNodeMut::Block(block) = node {
+                block.0.retain_mut(|stmt| *stmt != Stmt::Noop);
             }
 
             Ok(())
