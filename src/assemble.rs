@@ -127,6 +127,7 @@ impl Structure {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct AssembledStructure {
     pub fields: Vec<(String, Expr)>,
     pub evaluated_scope: Scope,
@@ -188,57 +189,6 @@ impl Display for AssembledStructure {
         write!(f, " }}")
     }
 }
-
-// #[derive(Debug, Clone, PartialEq)]
-// pub enum AssembledField {
-//     F32(f32),
-//     Bool(bool),
-//     Vec4(Vec4),
-//     Mat4x4(Mat4),
-//     Unit,
-// }
-//
-// impl AssembledField {
-//     pub fn type_string(&self) -> String {
-//         match self {
-//             AssembledField::F32(_) => "f32",
-//             AssembledField::Bool(_) => "bool",
-//             AssembledField::Vec4(_) => "Vec4",
-//             AssembledField::Mat4x4(_) => "Mat4",
-//             AssembledField::Unit => "()"
-//         }.to_string()
-//     }
-//
-//     pub fn types_match(&self, other: &AssembledField) -> bool {
-//         self.type_string() == other.type_string()
-//     }
-// }
-//
-// impl TryFrom<Field> for AssembledField {
-//     type Error = anyhow::Error;
-//
-//     fn try_from(field: Field) -> AnyResult<Self> {
-//         match field {
-//             Field::F32(f) => Ok(Self::F32(f)),
-//             Field::Bool(b) => Ok(Self::Bool(b)),
-//             Field::Vec4(v) => Ok(Self::Vec4(v)),
-//             Field::Mat4x4(m) => Ok(Self::Mat4x4(m)),
-//             _ => Err(anyhow!("Field not supported"))
-//         }
-//     }
-// }
-//
-// impl Display for AssembledField {
-//     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-//         match self {
-//             AssembledField::F32(float) => write!(f, "{}", float),
-//             AssembledField::Bool(b) => write!(f, "{}", b),
-//             AssembledField::Vec4(v) => write!(f, "{:?}", v),
-//             AssembledField::Mat4x4(m) => write!(f, "{:?}", m),
-//             AssembledField::Unit => write!(f, "()")
-//         }
-//     }
-// }
 
 #[cfg(test)]
 mod tests {
