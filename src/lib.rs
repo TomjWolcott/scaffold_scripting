@@ -6,6 +6,7 @@ mod ast_operations;
 mod interpreter;
 mod to_wgsl;
 pub mod test_helpers;
+mod utils;
 
 pub mod prelude {
     pub use crate::parser::*;
@@ -15,4 +16,5 @@ pub mod prelude {
     pub use crate::ast_operations::*;
     pub use crate::interpreter::*;
     pub use crate::to_wgsl::*;
+    pub use crate::utils::*;
 }

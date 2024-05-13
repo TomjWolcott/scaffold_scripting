@@ -11,6 +11,6 @@ lazy_static = "1.4.0"
 pest = "2.7.10"
 pest_derive = "2.7.10"
 glam = "0.24.2"
-ron = "0.9.0-alpha.0"
+ron = "0.8.1"
 serde = { version = "1.0.196", features = ["derive"] }
 anyhow = "1.0.79"

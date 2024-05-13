@@ -1,10 +1,12 @@
-use ron::{from_str, Map, Value};
+use ron::{from_str, Value};
 use glam::{f32, Mat4, Vec4};
 use std::fmt::{Display, Formatter};
 use std::fmt;
 use lazy_static::lazy_static;
+use ron::Map;
 use regex::Regex;
 use crate::parser::{Expr, Lit, parse_expr, ParseError};
+use crate::utils::GetOnMap;
 
 #[derive(Debug)]
 pub enum FromRonError {
@@ -95,10 +97,10 @@ impl TryFromRonValue for Field {
                 }
             },
             Value::Map(m) => {
-                if Some(&Value::String("Expr".to_string())) != m.get(&Value::String("__struct_name".to_string())) {
+                if Some(&Value::String("Expr".to_string())) != m.get("__struct_name") {
                     Ok(Self::Structure(Box::new(Structure::try_from_ron_value(Value::Map(m))?)))
 
-                } else if let Some(Value::String(expr)) = m.get(&Value::String("expr".to_string())) {
+                } else if let Some(Value::String(expr)) = m.get("expr") {
                     Ok(Self::Expr(parse_expr(expr).map_err(|err| FromRonError::ParseExprErr(err))?))
 
                 } else {

@@ -41,7 +41,7 @@ impl ToWgsl for Block {
         }
 
         for expr in &self.1 {
-            string.push_str(format!("{}{}", TAB.repeat(tabs+1), expr.to_wgsl_rec(ident_scope, tabs + 1)?).as_str());
+            string.push_str(format!("{}return {};", TAB.repeat(tabs+1), expr.to_wgsl_rec(ident_scope, tabs + 1)?).as_str());
         }
 
         string.push_str(format!("\n{}}}", TAB.repeat(tabs)).as_str());
@@ -93,7 +93,7 @@ impl ToWgsl for Expr {
             Expr::Lit(lit) => {
                 Ok(format!("{lit}"))
             }
-            Expr::Block(block) => block.to_wgsl_rec(ident_scope, tabs),
+            Expr::Block(block) => Err(anyhow!("Block expressions are not supported in WGSL")),
         }
     }
 }
@@ -110,6 +110,21 @@ mod tests {
         let assembled_structure = AssembledStructure::new(&document, structure).unwrap();
         let method = assembled_structure.get_method("proj").unwrap();
 
-        println!("{}", method.to_wgsl(&mut Vec::new()).unwrap());
+        assert_eq!(method.to_wgsl(&mut Vec::new()).unwrap(), "fn proj(vector: vec4) -> vec4 {\n    let vector_00004: vec4 = ((5 + (length((vector - __shape2__shift)) - __shape2____shape__radius)) * ((__shape2____shape__radius * normalize((vector - __shape2__shift))) + __shape2__shift));\n    return ((vector_00004 - (dot(vector_00004, __shape1__normal) * __shape1__normal)) * dot(vector, __shape1__normal));\n}");
+    }
+
+    #[test]
+    fn test_to_wgsl_with_data_arrays() {
+        let (document, structure) = get_test_stuff(0, 2);
+        let assembled_structure = AssembledStructure::new(&document, structure).unwrap();
+        let method = assembled_structure.get_method("proj").unwrap();
+
+        let string = method.to_wgsl(&mut vec![
+            ("__shape2__shift".to_string(), "vec4_data_array[1]".to_string()),
+            ("__shape1__normal".to_string(), "vec4_data_array[0]".to_string()),
+            ("__shape2____shape__radius".to_string(), "f32_data_array[1]".to_string()),
+        ]).unwrap();
+
+        assert_eq!(&string[..], "fn proj(vector: vec4) -> vec4 {\n    let vector_00004: vec4 = ((5 + (length((vector - vec4_data_array[1])) - f32_data_array[1])) * ((f32_data_array[1] * normalize((vector - vec4_data_array[1]))) + vec4_data_array[1]));\n    return ((vector_00004 - (dot(vector_00004, vec4_data_array[0]) * vec4_data_array[0])) * dot(vector, vec4_data_array[0]));\n}");
     }
 }

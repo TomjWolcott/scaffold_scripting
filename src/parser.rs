@@ -65,7 +65,13 @@ pub fn parse_document(script: impl AsRef<str>) -> Result<Document, ParseError> {
 }
 
 impl Document {
-    #[allow(dead_code)]
+    pub fn new() -> Self {
+        Self {
+            interfaces: Vec::new(),
+            classes: Vec::new()
+        }
+    }
+
     /// New classes/interfaces overwrite old ones!!
     pub fn parse_and_merge(&mut self, pair: Pair<Rule>) -> Result<(), ParseError> {
         let Document {
