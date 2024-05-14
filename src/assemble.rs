@@ -1,10 +1,11 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use crate::parser::{Bound, Document, Expr, Instance, KeyVal, Method, MethodKey, Stmt, Value};
-use crate::structure::{Field, Structure};
+use crate::parser::{Bound, Document, Expr, Instance, KeyVal, Method, MethodKey, Stmt, Value as ParseValue};
+use crate::structure::{Field, Structure, TryFromRonValue};
 use crate::tree_walk::{TreeNodeMut, WalkTreeMut};
 
 use anyhow::{anyhow, Context, Result as AnyResult};
+use ron::Value;
 use crate::ast_operations::{AlphaConvert, IdentScope};
 use crate::interpreter::{Eval, Scope};
 
@@ -21,15 +22,15 @@ impl Structure {
     fn create_instance(&self, instance: &Instance) -> Structure {
         let fields = instance.key_vals.iter().map(|KeyVal { key, value }| {
             (key.clone(), match value {
-                Value::Expr(Expr::Var(var_name)) => {
+                ParseValue::Expr(Expr::Var(var_name)) => {
                     if let Some(Field::Structure(structure)) = self.get_field(var_name) {
                         Field::Structure(structure.clone())
                     } else {
                         Field::Expr(Expr::Var(var_name.clone()))
                     }
                 },
-                Value::Expr(expr) => Field::Expr(expr.clone()),
-                Value::Instance(sub_instance) => Field::Structure(Box::new(self.create_instance(sub_instance)))
+                ParseValue::Expr(expr) => Field::Expr(expr.clone()),
+                ParseValue::Instance(sub_instance) => Field::Structure(Box::new(self.create_instance(sub_instance)))
             })
         }).collect();
 
@@ -129,12 +130,28 @@ impl Structure {
 
 #[derive(Debug, Clone)]
 pub struct AssembledStructure {
-    pub fields: Vec<(String, Expr)>,
+    pub(crate) fields: Vec<(String, Expr)>,
     pub evaluated_scope: Scope,
-    pub methods: Vec<Method>
+    pub(crate) methods: Vec<Method>
 }
 
 impl AssembledStructure {
+    pub fn empty() -> Self {
+        Self {
+            fields: Vec::new(),
+            evaluated_scope: Scope::new(),
+            methods: Vec::new()
+        }
+    }
+
+    pub fn new_from_ron(document: &Document, ron: impl AsRef<str>) -> AnyResult<Self> {
+        Self::new(document, Structure::from_ron_string(ron.as_ref())?)
+    }
+
+    pub fn new_from_value(document: &Document, ron: Value) -> AnyResult<Self> {
+        Self::new(document, Structure::try_from_ron_value(ron)?)
+    }
+
     pub fn new(document: &Document, mut structure: Structure) -> AnyResult<Self> {
         let mut fields = Vec::new();
 
@@ -165,6 +182,13 @@ impl AssembledStructure {
 
     pub fn get_method(&self, name: impl AsRef<str>) -> Option<&Method> {
         self.methods.iter().find(|method| method.name.as_str() == name.as_ref())
+    }
+
+    // TODO: Move away from using fn names, should be able to just say "does xyz implement trait?"
+    pub fn has_methods<'a>(&self, methods: impl IntoIterator<Item=&'a str>) -> bool {
+        methods.into_iter().all(|method_name| {
+            self.get_method(method_name).is_some()
+        })
     }
 }
 

@@ -1,6 +1,6 @@
 use ron::{from_str, Value};
 use glam::{f32, Mat4, Vec4};
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::fmt;
 use lazy_static::lazy_static;
 use ron::Map;
@@ -19,6 +19,14 @@ pub enum FromRonError {
     DynamicIsMissingFields(Map),
     ParseExprErr(ParseError),
 }
+
+impl Display for FromRonError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        std::fmt::Debug::fmt(&self, f)
+    }
+}
+
+impl std::error::Error for FromRonError {}
 
 pub trait TryFromRonValue where Self: Sized {
     fn try_from_ron_value(value: Value) -> ron::Result<Self, FromRonError>;

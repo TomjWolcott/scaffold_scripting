@@ -93,7 +93,7 @@ impl ToWgsl for Expr {
             Expr::Lit(lit) => {
                 Ok(format!("{lit}"))
             }
-            Expr::Block(block) => Err(anyhow!("Block expressions are not supported in WGSL")),
+            Expr::Block(_) => Err(anyhow!("Block expressions are not supported in WGSL")),
         }
     }
 }

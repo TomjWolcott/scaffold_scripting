@@ -6,7 +6,7 @@ pub trait GetOnMap {
 
 impl GetOnMap for Map {
     fn get(&self, key: &(impl AsRef<str> + ?Sized)) -> Option<&Value> {
-        self.iter().find(|(key_value, value)| {
+        self.iter().find(|(key_value, _)| {
             match key_value {
                 Value::String(other_key) => other_key.as_str() == key.as_ref(),
                 _ => false

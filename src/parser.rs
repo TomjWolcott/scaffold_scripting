@@ -95,6 +95,12 @@ impl Document {
         Ok(())
     }
 
+    pub fn parse_and_merge_str(&mut self, script: impl AsRef<str>) -> Result<(), ParseError> {
+        let mut parsed = ScaffoldParser::parse(Rule::document, script.as_ref()).unwrap();
+        
+        self.parse_and_merge(parsed.next().unwrap())
+    }
+
     pub fn get_interface(&self, name: impl AsRef<str>) -> Option<&Interface> {
         self.interfaces.iter().find(
             |Interface { name: name2, .. }| name2.as_str() == name.as_ref()
