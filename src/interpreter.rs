@@ -14,7 +14,7 @@ impl IntoArgs for Vec<Lit> {
     }
 }
 
-macro_rules! impl_into_args {
+macro_rules! impl_tuple_stuff {
     ($($ty:ident),*) => {
         #[allow(non_camel_case_types)]
         impl<$($ty : Into<Lit>),*> IntoArgs for ($($ty,)*) {
@@ -22,6 +22,30 @@ macro_rules! impl_into_args {
                 let ( $($ty,)* ) = self;
 
                 vec![ $( $ty .into() ),* ]
+            }
+        }
+
+        #[allow(non_camel_case_types)]
+        impl<$($ty: TryFrom<Lit, Error=anyhow::Error>),*> TryFrom<Lit> for ($($ty,)*) {
+            type Error = anyhow::Error;
+
+            fn try_from(value: Lit) -> Result<Self, Self::Error> {
+                match value {
+                    Lit::Tuple(fields) => {
+                        let mut iter = fields.into_iter();
+
+                        $(
+                            let $ty = iter.next().ok_or_else(|| anyhow!("Not enough fields in tuple"))?.try_into()?;
+                        )*
+
+                        if iter.next().is_some() {
+                            return Err(anyhow!("Too many fields in tuple"));
+                        }
+
+                        Ok(($($ty,)*))
+                    }
+                    _ => Err(anyhow!("Field not supported"))
+                }
             }
         }
     };
@@ -33,23 +57,23 @@ impl<T: Into<Lit>> IntoArgs for T {
     }
 }
 
-impl_into_args!(a);
-impl_into_args!(a, b);
-impl_into_args!(a, b, c);
-impl_into_args!(a, b, c, d);
-impl_into_args!(a, b, c, d, e);
-impl_into_args!(a, b, c, d, e, f);
-impl_into_args!(a, b, c, d, e, f, g);
-impl_into_args!(a, b, c, d, e, f, g, h);
-impl_into_args!(a, b, c, d, e, f, g, h, i);
-impl_into_args!(a, b, c, d, e, f, g, h, i, j);
-impl_into_args!(a, b, c, d, e, f, g, h, i, j, k);
-impl_into_args!(a, b, c, d, e, f, g, h, i, j, k, l);
-impl_into_args!(a, b, c, d, e, f, g, h, i, j, k, l, m);
-impl_into_args!(a, b, c, d, e, f, g, h, i, j, k, l, m, n);
-impl_into_args!(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o);
-impl_into_args!(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p);
-impl_into_args!(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q);
+impl_tuple_stuff!(a);
+impl_tuple_stuff!(a, b);
+impl_tuple_stuff!(a, b, c);
+impl_tuple_stuff!(a, b, c, d);
+impl_tuple_stuff!(a, b, c, d, e);
+impl_tuple_stuff!(a, b, c, d, e, f);
+impl_tuple_stuff!(a, b, c, d, e, f, g);
+impl_tuple_stuff!(a, b, c, d, e, f, g, h);
+impl_tuple_stuff!(a, b, c, d, e, f, g, h, i);
+impl_tuple_stuff!(a, b, c, d, e, f, g, h, i, j);
+impl_tuple_stuff!(a, b, c, d, e, f, g, h, i, j, k);
+impl_tuple_stuff!(a, b, c, d, e, f, g, h, i, j, k, l);
+impl_tuple_stuff!(a, b, c, d, e, f, g, h, i, j, k, l, m);
+impl_tuple_stuff!(a, b, c, d, e, f, g, h, i, j, k, l, m, n);
+impl_tuple_stuff!(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o);
+impl_tuple_stuff!(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p);
+impl_tuple_stuff!(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q);
 
 impl TryFrom<Lit> for f32 {
     type Error = anyhow::Error;
@@ -135,7 +159,6 @@ impl From<()> for Lit {
     fn from(_: ()) -> Lit {
         Lit::Unit
     }
-
 }
 
 #[derive(Debug, Clone)]
@@ -181,6 +204,8 @@ impl Display for Scope {
 
 impl AssembledStructure {
     pub fn eval_method<OUT: TryFrom<Lit, Error=anyhow::Error>>(&self, method_name: impl AsRef<str>, args: impl IntoArgs) -> AnyResult<OUT> {
+        /* TODO: It's bad to search for the method every single time, I need to find
+                a way to let the user have it/get it fast.  Perhaps give an index? */
         let method = self.get_method(&method_name)
             .with_context(|| format!("Could not find method {}", method_name.as_ref()))?;
 
@@ -192,31 +217,13 @@ impl AssembledStructure {
 
         Ok(method.body.eval(&mut scope)?.try_into()?)
     }
-
-    // pub fn eval_method<OUT: TryFrom<Lit, Error=anyhow::Error>>(&mut self, method_name: impl AsRef<str>, args: impl IntoArgs) -> AnyResult<OUT> {
-    //     let scope =
-    //
-    //     let method = self.get_method(&method_name)
-    //         .with_context(|| format!("Could not find method {}", method_name.as_ref()))?;
-    //
-    //     let scope_size = self.evaluated_scope.size();
-    //
-    //     for (
-    //         Binding(name, _),
-    //         field
-    //     ) in method.inputs.iter().zip(args.into_args().into_iter()) {
-    //         self.evaluated_scope.push(name.clone(), field);
-    //     }
-    //
-    //     let output_result = method.body.eval(&mut self.evaluated_scope);
-    //
-    //     self.evaluated_scope.resize(scope_size);
-    //
-    //     Ok(output_result?.try_into()?)
-    // }
 }
 
 pub trait Eval {
+    fn eval_into<OUT: TryFrom<Lit, Error=anyhow::Error>>(&self) -> AnyResult<OUT> {
+        self.eval(&mut Scope::new())?.try_into()
+    }
+
     fn eval(&self, scope: &mut Scope) -> AnyResult<Lit>;
 }
 
@@ -406,6 +413,9 @@ impl Eval for Expr {
                 }
             },
             Expr::Dot(_, _, _) => Err(anyhow!("EVAL NOT SUPPORTED FOR DOT")),
+            Expr::Tuple(elements) => {
+                Ok(Lit::Tuple(elements.iter().map(|expr| expr.eval(scope)).collect::<AnyResult<Vec<_>>>()?))
+            },
             Expr::Var(var) => match var.as_str() {
                 "X" => Ok(Lit::Vec4(Vec4::X)),
                 "Y" => Ok(Lit::Vec4(Vec4::Y)),
@@ -427,18 +437,30 @@ impl Eval for Expr {
 mod tests {
     use glam::Vec4;
     use crate::assemble::AssembledStructure;
-    use crate::interpreter::{Eval, Scope};
+    use crate::interpreter::{Eval};
     use crate::parser::parse_block;
     use crate::test_helpers::{get_test_stuff, prettify_string};
 
     #[test]
     fn try_eval_block() {
         let block = parse_block(r#"{
-        let x: f32 = 4;
-        select(x + 2, 2, x < x + 1)
-    }"#).unwrap();
+            let x: f32 = 4;
+            select(x + 2, 2, x < x + 1)
+        }"#).unwrap();
 
-        println!("Eval: {}", f32::try_from(block.eval(&mut Scope::new()).unwrap()).unwrap())
+        println!("Eval: {}", block.eval_into::<f32>().unwrap())
+    }
+
+    #[test]
+    fn try_eval_block_tuple() {
+        let block = parse_block(r#"{
+            let x: f32 = 4;
+            select((x + 2, 5), (2, x), x < x + 1)
+        }"#).unwrap();
+
+        let (min, max): (f32, f32) = block.eval_into().unwrap();
+
+        println!("Eval: ({}, {})", min, max);
     }
 
     #[test]

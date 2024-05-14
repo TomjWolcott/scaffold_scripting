@@ -36,9 +36,10 @@ stmt  = { (decl | asgn | (expr ~ ";")) }
 
 expr = { (prec4) }
     exprs = { "(" ~ w ~ (expr ~ w ~ "," ~ w)* ~ (expr ~ w)? ~ ")" }
-    prec0 = { "(" ~ w ~ prec2 ~ w ~ ")" | app | dot | var | lit | block_expr_wrapper }
+    prec0 = { "(" ~ w ~ prec2 ~ w ~ ")" | app | dot | tuple | var | lit | block_expr_wrapper }
         app       = { ident ~ w ~ exprs }
         dot       = { ident ~ "." ~ ident ~ exprs }
+        tuple     = { "(" ~ w ~ (expr ~ w ~ "," ~ w)+ ~ (expr ~ w)? ~ ")" }
         var       = { ident }
         lit       = { (number | bool) }
             bool       = { "true" | "false" }

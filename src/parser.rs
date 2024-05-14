@@ -97,7 +97,7 @@ impl Document {
 
     pub fn parse_and_merge_str(&mut self, script: impl AsRef<str>) -> Result<(), ParseError> {
         let mut parsed = ScaffoldParser::parse(Rule::document, script.as_ref()).unwrap();
-        
+
         self.parse_and_merge(parsed.next().unwrap())
     }
 
@@ -712,6 +712,7 @@ pub enum Expr {
     UnaryExpr(String, Box<Expr>),
     Application(String, Vec<Expr>),
     Dot(String, String, Vec<Expr>),
+    Tuple(Vec<Expr>),
     Var(String),
     Lit(Lit),
     Block(Box<Block>)
@@ -719,7 +720,7 @@ pub enum Expr {
 
 impl Parse for Expr {
     fn parse(expr_pair: Pair<Rule>) -> Result<Self, ParseError> {
-        assert_rule!(expr_pair, expr | app | dot | var | lit | block_expr_wrapper);
+        assert_rule!(expr_pair, expr | app | dot | tuple | var | lit | block_expr_wrapper);
         let rule = expr_pair.as_rule();
         let mut expr_pairs = expr_pair.into_inner();
 
@@ -741,6 +742,15 @@ impl Parse for Expr {
                 }
 
                 Expr::Application(name, args)
+            },
+            Rule::tuple => {
+                let mut elements = Vec::new();
+
+                for pair in expr_pairs {
+                    elements.push(Expr::parse(pair)?);
+                }
+
+                Expr::Tuple(elements)
             },
             Rule::dot => {
                 let name = expr_pairs.next().unwrap().as_str().to_string();
@@ -798,6 +808,19 @@ impl Display for Expr {
                     write!(f, "{}", arg)?;
 
                     if i < args.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+
+                write!(f, ")")
+            },
+            Self::Tuple(elements) => {
+                write!(f, "(")?;
+
+                for (i, element) in elements.iter().enumerate() {
+                    write!(f, "{}", element)?;
+
+                    if i < elements.len() - 1 || i == 0 {
                         write!(f, ", ")?;
                     }
                 }
@@ -928,7 +951,8 @@ pub enum Type {
     Mat4x4,
     Class,
     Auto,
-    Unit
+    Unit,
+    Tuple(Vec<Type>),
 }
 
 impl Type {
@@ -968,7 +992,21 @@ impl Display for Type {
             Self::Mat4x4 => write!(f, "Mat4"),
             Self::Class => write!(f, "Class"),
             Self::Auto => write!(f, "Auto"),
-            Self::Unit => write!(f, "()")
+            Self::Unit => write!(f, "()"),
+            Self::Tuple(elem_types) => {
+                write!(f, "(")?;
+
+                for (i, element) in elem_types.iter().enumerate() {
+                    write!(f, "{}", element)?;
+
+                    if i < elem_types.len() - 1 || i == 0 {
+                        write!(f, ", ")?;
+                    }
+                }
+
+                write!(f, ")")
+
+            }
         }
     }
 }
@@ -979,6 +1017,7 @@ pub enum Lit {
     Bool(bool),
     Vec4(Vec4),
     Mat4x4(Mat4),
+    Tuple(Vec<Lit>),
     Unit
 }
 
@@ -989,6 +1028,7 @@ impl Lit {
             Self::Bool(_) => Type::Bool,
             Self::Vec4(_) => Type::Vec4,
             Self::Mat4x4(_) => Type::Mat4x4,
+            Self::Tuple(elements) => Type::Tuple(elements.iter().map(|lit| lit.get_type()).collect()),
             Self::Unit => Type::Unit
         }
     }
@@ -1022,7 +1062,20 @@ impl Display for Lit {
             Self::Bool(b) => write!(f, "{}", b),
             Self::Vec4(vec) => write!(f, "{}", vec),
             Self::Mat4x4(mat) => write!(f, "{}", mat),
-            Self::Unit => write!(f, "()")
+            Self::Unit => write!(f, "()"),
+            Self::Tuple(elements) => {
+                write!(f, "(")?;
+
+                for (i, element) in elements.iter().enumerate() {
+                    write!(f, "{}", element)?;
+
+                    if i < elements.len() - 1 || i == 0 {
+                        write!(f, ", ")?;
+                    }
+                }
+
+                write!(f, ")")
+            }
         }
     }
 }

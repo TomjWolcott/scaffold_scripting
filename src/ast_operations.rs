@@ -95,6 +95,11 @@ impl AlphaConvert for Expr {
                     expr.alpha_convert(&mut scope.clone());
                 }
             }
+            Expr::Tuple(exprs) => {
+                for expr in exprs.iter_mut() {
+                    expr.alpha_convert(&mut scope.clone());
+                }
+            }
             Expr::Var(var) => {
                 if let Some(new_var) = scope.get(&var) {
                     *var = new_var.clone();
@@ -155,6 +160,7 @@ impl Expr {
             Expr::UnaryExpr(_, expr) => {
                 expr.promote_blocks()
             }
+            Expr::Tuple(exprs) |
             Expr::Application(_, exprs) |
             Expr::Dot(_, _, exprs) => {
                 exprs.iter_mut().map(|expr| {
@@ -268,7 +274,7 @@ fn try_out_ops() {
             y * x
         };
         let x: Vec4 = x * y;
-        x + y
+        (x + y, 5)
     }"#).unwrap();
 
     let before = prettify_string(format!("{}", block.clone()));
