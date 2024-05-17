@@ -202,6 +202,30 @@ impl Display for Scope {
     }
 }
 
+impl Scope {
+    pub fn iter(&self) -> ScopeIterator {
+        ScopeIterator {
+            scope: self,
+            index: 0
+        }
+    }
+}
+
+pub struct ScopeIterator<'a> {
+    scope: &'a Scope,
+    index: usize
+}
+
+impl<'a> Iterator for ScopeIterator<'a> {
+    type Item = (&'a String, &'a Lit);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let result = self.scope.0.get(self.index).map(|(name, field)| (name, field));
+        self.index += 1;
+        result
+    }
+}
+
 impl AssembledStructure {
     pub fn eval_method<OUT: TryFrom<Lit, Error=anyhow::Error>>(&self, method_name: impl AsRef<str>, args: impl IntoArgs) -> AnyResult<OUT> {
         /* TODO: It's bad to search for the method every single time, I need to find
