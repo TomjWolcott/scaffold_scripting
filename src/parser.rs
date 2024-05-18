@@ -50,7 +50,8 @@ pub enum ParseError {
     TypeNotFound(String),
     LitNotFound(String),
     BadRule(Rule, Vec<Rule>),
-    IncorrectNumPairs(usize, String)
+    IncorrectNumPairs(usize, String),
+    BadPestParse(pest::error::Error<Rule>)
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -60,7 +61,9 @@ pub struct Document {
 }
 
 pub fn parse_document(script: impl AsRef<str>) -> Result<Document, ParseError> {
-    let mut parsed = ScaffoldParser::parse(Rule::document, script.as_ref()).unwrap();
+    let mut parsed = ScaffoldParser::parse(Rule::document, script.as_ref())
+        .map_err(ParseError::BadPestParse)?;
+
     Document::parse(parsed.next().unwrap())
 }
 
@@ -70,6 +73,13 @@ impl Document {
             interfaces: Vec::new(),
             classes: Vec::new()
         }
+    }
+
+    pub fn from_str(script: impl AsRef<str>) -> Result<Self, ParseError> {
+        let mut parsed = ScaffoldParser::parse(Rule::document, script.as_ref())
+            .map_err(ParseError::BadPestParse)?;
+
+        Self::parse(parsed.next().unwrap())
     }
 
     /// New classes/interfaces overwrite old ones!!
@@ -96,7 +106,8 @@ impl Document {
     }
 
     pub fn parse_and_merge_str(&mut self, script: impl AsRef<str>) -> Result<(), ParseError> {
-        let mut parsed = ScaffoldParser::parse(Rule::document, script.as_ref()).unwrap();
+        let mut parsed = ScaffoldParser::parse(Rule::document, script.as_ref())
+            .map_err(ParseError::BadPestParse)?;
 
         self.parse_and_merge(parsed.next().unwrap())
     }
@@ -975,10 +986,22 @@ impl Parse for Type {
         match pair.as_str() {
             "bool" => Ok(Self::Bool),
             "f32" => Ok(Self::F32),
-            "Vec4" => Ok(Self::Vec4),
-            "Mat4" => Ok(Self::Mat4x4),
+            "vec4" => Ok(Self::Vec4),
+            "mat4x4" => Ok(Self::Mat4x4),
             "Class" => Ok(Self::Class),
-            ty => Err(ParseError::TypeNotFound(ty.to_string()))
+            "()" => Ok(Self::Unit),
+            ty => {
+                let tuple_types = pair
+                    .into_inner()
+                    .map(Type::parse)
+                    .collect::<Result<Vec<Type>, _>>()?;
+
+                if tuple_types.len() > 0 {
+                    Ok(Self::Tuple(tuple_types))
+                } else {
+                    Err(ParseError::TypeNotFound(ty.to_string()))
+                }
+            }
         }
     }
 }
@@ -989,7 +1012,7 @@ impl Display for Type {
             Self::Bool => write!(f, "bool"),
             Self::F32 => write!(f, "f32"),
             Self::Vec4 => write!(f, "Vec4"),
-            Self::Mat4x4 => write!(f, "Mat4"),
+            Self::Mat4x4 => write!(f, "Mat4x4"),
             Self::Class => write!(f, "Class"),
             Self::Auto => write!(f, "Auto"),
             Self::Unit => write!(f, "()"),
@@ -1180,7 +1203,8 @@ impl Display for Value {
 #[cfg(test)]
 mod tests {
     use pest::Parser;
-    use crate::parser::{Document, Parse, Rule, ScaffoldParser};
+    use crate::interpreter::{Eval, Scope};
+    use crate::parser::{Document, Parse, parse_block, Rule, ScaffoldParser};
     use crate::test_helpers;
 
     #[test]
@@ -1238,5 +1262,20 @@ mod tests {
         println!("impls:\n{}\n\n", implementations.unwrap().iter().map(|x| format!("{x}")).collect::<Vec<_>>().join("\n"));
 
         println!("{}", string);
+    }
+
+    #[test]
+    fn tuple_test() {
+        let script = r#"{
+            let a: (f32, f32) = (1.0, 2.0);
+            let b: (f32, (f32, f32), mat4x4) = (1.0, (1 + 3, -.1 + 8), 3 * mat4x4(X, Z, Y, W));
+            let c: (f32, vec4, f32, f32) = (1.0, vec4(1, 3, 2, 1) / 8, 3.0, 4.0);
+            b
+        }"#;
+
+        let block = parse_block(script).unwrap();
+        let string = test_helpers::prettify_string(format!("{block}"));
+
+        println!("{}\nwhich returns: {:?}", string, block.eval(&mut Scope::new()));
     }
 }
