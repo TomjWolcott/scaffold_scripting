@@ -61,13 +61,13 @@ expr = { (prec4) }
         block_expr_wrapper = { block_expr }
     unary = { (unary_op ~ w ~ unary | prec0) }
         unary_op = { "!" | "-" | "+" }
-    prec1 = { (unary ~ w ~ op1 ~ w ~ prec1) | unary }
+    prec1 = { unary ~ (w ~ op1 ~ w ~ prec1)? }
         op1 = { "*" | "/" }
-    prec2 = { (prec1 ~ w ~ op2 ~ w ~ prec2) | prec1 }
+    prec2 = { prec1 ~ (w ~ op2 ~ w ~ prec2)? }
         op2 = { "+" | "-" }
-    prec3 = { (prec2 ~ w ~ op3 ~ w ~ prec3) | prec2 }
+    prec3 = { prec2 ~ (w ~ op3 ~ w ~ prec3)? }
         op3 = { "&&" | "||" }
-    prec4 = { (prec3 ~ w ~ op4 ~ w ~ prec4) | prec3 }
+    prec4 = { prec3 ~ (w ~ op4 ~ w ~ prec4)? }
         op4 = { "==" | "!=" | "<" | "<=" | ">" | ">=" }
 
 key_val = { ident ~ (w ~ ":" ~ w ~ (instance | expr))? }
