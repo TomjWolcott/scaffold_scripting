@@ -89,16 +89,13 @@ impl Document {
             interfaces: other_interfaces
         } = &mut Document::parse(pair)?;
 
-        let classes = std::mem::replace(&mut self.classes, Vec::new());
-        let interfaces = std::mem::replace(&mut self.interfaces, Vec::new());
+        self.classes.retain(|Class { name, .. }| {
+            !other_classes.iter().any(|Class { name: other_name, .. }| name == other_name)
+        });
 
-        self.classes = classes.into_iter().filter(|Class { name, .. }| {
-            other_classes.iter().any(|Class { name: other_name, .. }| name == other_name)
-        }).collect();
-
-        self.interfaces = interfaces.into_iter().filter(|Interface { name, .. }| {
-            other_interfaces.iter().any(|Interface { name: other_name, .. }| name == other_name)
-        }).collect();
+        self.interfaces.retain(|Interface { name, .. }| {
+            !other_interfaces.iter().any(|Interface { name: other_name, .. }| name == other_name)
+        });
 
         self.classes.append(other_classes);
 
