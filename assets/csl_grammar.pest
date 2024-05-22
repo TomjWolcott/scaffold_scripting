@@ -8,7 +8,7 @@ implement = { ident ~ "::" ~ ident }
 bound = { ident ~ w ~ ":" ~ w ~ (ident ~ w ~ "+" ~ w)* ~ ident }
 bounds = { "<" ~ w ~ bound ~ w ~ ("," ~ w ~ bound ~ w)* ~ ">" }
 
-document = { (w ~ (class | interface))* ~ w }
+document = { (w ~ (class | interface))* ~ w ~ EOI }
 interface = { "interface" ~ w ~ ident ~ w ~ "{" ~
 		w ~ ((default_method | method_header) ~ w ~ "," ~ w)* ~ (default_method | method_header)? ~ w
 	~ "}"
