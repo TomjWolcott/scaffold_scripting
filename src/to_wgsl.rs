@@ -11,6 +11,26 @@ pub trait ToWgsl {
     fn to_wgsl_rec(&self, ident_scope: &mut Vec<(String, String)>, tabs: usize) -> AnyResult<String>;
 }
 
+impl Method {
+    pub fn to_wgsl_with_fn_name(&self, fn_name: impl AsRef<str>, ident_scope: &mut Vec<(String, String)>, ) -> AnyResult<String> {
+        let mut inputs = Vec::new();
+
+        for Binding(name, ty) in self.inputs.iter() {
+            ident_scope.push((name.clone(), name.clone()));
+
+            inputs.push(format!("{}: {}", name.clone(), ty.wgsl_type()))
+        }
+
+        Ok(format!(
+            "{}fn {fn_name}({}) -> {} {}",
+            TAB.repeat(0),
+            inputs.join(", "),
+            self.output.wgsl_type(),
+            self.body.to_wgsl_rec(ident_scope, tabs)?
+        ))
+    }
+}
+
 impl ToWgsl for Method {
     fn to_wgsl_rec(&self, ident_scope: &mut Vec<(String, String)>, tabs: usize) -> AnyResult<String> {
         let mut inputs = Vec::new();
