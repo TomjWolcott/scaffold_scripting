@@ -310,6 +310,8 @@ impl Eval for Expr {
                     (Lit::F32(n1), "-", Lit::F32(n2)) => Ok(Lit::F32(n1 - n2)),
                     (Lit::F32(n1), "*", Lit::F32(n2)) => Ok(Lit::F32(n1 * n2)),
                     (Lit::F32(n1), "/", Lit::F32(n2)) => Ok(Lit::F32(n1 / n2)),
+                    (Lit::Vec4(v1), "*", Lit::Vec4(v2)) => Ok(Lit::Vec4(v1 * v2)),
+                    (Lit::Vec4(v1), "/", Lit::Vec4(v2)) => Ok(Lit::Vec4(v1 / v2)),
 
                     (Lit::Vec4(v1), "+", Lit::Vec4(v2)) => Ok(Lit::Vec4(v1 + v2)),
                     (Lit::Vec4(v1), "-", Lit::Vec4(v2)) => Ok(Lit::Vec4(v1 - v2)),

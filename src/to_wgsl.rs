@@ -115,9 +115,27 @@ impl ToWgsl for Expr {
                 }
             }
             Expr::Lit(lit) => {
-                Ok(format!("{lit}"))
+                lit.to_wgsl_rec(ident_scope, tabs)
             }
             Expr::Block(_) => Err(anyhow!("Block expressions are not supported in WGSL")),
+        }
+    }
+}
+
+impl ToWgsl for Lit {
+    fn to_wgsl_rec(&self, _ident_scope: &mut Vec<(String, String)>, _tabs: usize) -> AnyResult<String> {
+        match self {
+            Lit::F32(n) => Ok(format!("{:?}", n)),
+            Lit::Bool(b) => Ok(format!("{}", b)),
+            Lit::Vec4(v) => Ok(format!("vec4{}", &format!("{:?}", v)[4..])),
+            Lit::Mat4x4(m) => Ok(format!(
+                "mat4x4({},{},{},{})",
+                Lit::Vec4(m.x_axis).to_wgsl_rec(_ident_scope, _tabs)?,
+                Lit::Vec4(m.y_axis).to_wgsl_rec(_ident_scope, _tabs)?,
+                Lit::Vec4(m.z_axis).to_wgsl_rec(_ident_scope, _tabs)?,
+                Lit::Vec4(m.w_axis).to_wgsl_rec(_ident_scope, _tabs)?,
+            )),
+            lit => Err(anyhow!("Unsupported literal: {:?}", lit))
         }
     }
 }
