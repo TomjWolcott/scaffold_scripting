@@ -22,11 +22,11 @@ impl Method {
         }
 
         Ok(format!(
-            "{}fn {fn_name}({}) -> {} {}",
-            TAB.repeat(0),
+            "fn {}({}) -> {} {}",
+            fn_name.as_ref(),
             inputs.join(", "),
             self.output.wgsl_type(),
-            self.body.to_wgsl_rec(ident_scope, tabs)?
+            self.body.to_wgsl_rec(ident_scope, 0)?
         ))
     }
 }

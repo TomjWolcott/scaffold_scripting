@@ -997,8 +997,8 @@ impl Type {
         match self {
             Self::Bool => "bool".to_string(),
             Self::F32 => "f32".to_string(),
-            Self::Vec4 => "vec4".to_string(),
-            Self::Mat4x4 => "mat4x4".to_string(),
+            Self::Vec4 => "vec4<f32>".to_string(),
+            Self::Mat4x4 => "mat4x4<f32>".to_string(),
             _ => panic!("(Type::wgsl_type) Unsupported type: {:?}", self)
 
         }
