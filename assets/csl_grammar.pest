@@ -36,7 +36,7 @@ stmt  = { (decl | asgn | (expr ~ ";")) }
 
 expr = { (prec4) }
     exprs = { "(" ~ w ~ (expr ~ w ~ "," ~ w)* ~ (expr ~ w)? ~ ")" }
-    prec0 = { "(" ~ w ~ prec2 ~ w ~ ")" | app | dot | field | tuple | lit | var | block_expr_wrapper }
+    prec0 = { "(" ~ w ~ prec4 ~ w ~ ")" | app | dot | field | tuple | lit | var | block_expr_wrapper }
         app       = { ident ~ w ~ exprs }
         dot       = { ident ~ "." ~ ident ~ exprs }
         field      = { (var) ~ "." ~ ident } // TODO: Expand this to support nested fields
@@ -66,9 +66,9 @@ expr = { (prec4) }
     prec2 = { prec1 ~ (w ~ op2 ~ w ~ prec2)? }
         op2 = { "+" | "-" }
     prec3 = { prec2 ~ (w ~ op3 ~ w ~ prec3)? }
-        op3 = { "&&" | "||" }
+        op3 = { "==" | "!=" | "<" | "<=" | ">" | ">=" }
     prec4 = { prec3 ~ (w ~ op4 ~ w ~ prec4)? }
-        op4 = { "==" | "!=" | "<" | "<=" | ">" | ">=" }
+        op4 = { "&&" | "||" }
 
 key_val = { ident ~ (w ~ ":" ~ w ~ (instance | expr))? }
 instance = { ident ~ w ~ "{" ~ w ~ (key_val ~ w ~ "," ~ w)* ~ key_val? ~ w ~ "}" }
