@@ -419,6 +419,8 @@ impl Eval for Expr {
                     ("fract", &[Lit::Vec4(v)]) => Ok(Lit::Vec4(v.fract())),
                     ("trunc", &[Lit::F32(f)]) => Ok(Lit::F32(f.trunc())),
                     ("trunc", &[Lit::Vec4(v)]) => Ok(Lit::Vec4(v.trunc())),
+                    ("sign", &[Lit::F32(f)]) => Ok(Lit::F32(f.signum())),
+                    ("sign", &[Lit::Vec4(v)]) => Ok(Lit::Vec4(v.signum())),
 
                     ("select", [x_false, x_true, Lit::Bool(condition)]) => {
                         if !x_false.matches_type(x_true) {
@@ -437,6 +439,13 @@ impl Eval for Expr {
                 }
             },
             Expr::Dot(_, _, _) => Err(anyhow!("EVAL NOT SUPPORTED FOR DOT")),
+            Expr::Field(expr, field_name) => match (expr.eval(scope)?, field_name.as_str()) {
+                (Lit::Vec4(v), "x") => Ok(Lit::F32(v.x)),
+                (Lit::Vec4(v), "y") => Ok(Lit::F32(v.y)),
+                (Lit::Vec4(v), "z") => Ok(Lit::F32(v.z)),
+                (Lit::Vec4(v), "w") => Ok(Lit::F32(v.w)),
+                (lit, field_name) => Err(anyhow!("Field {field_name} not found in {lit}"))
+            }
             Expr::Tuple(elements) => {
                 Ok(Lit::Tuple(elements.iter().map(|expr| expr.eval(scope)).collect::<AnyResult<Vec<_>>>()?))
             },
@@ -446,6 +455,7 @@ impl Eval for Expr {
                 "Z" => Ok(Lit::Vec4(Vec4::Z)),
                 "W" => Ok(Lit::Vec4(Vec4::W)),
                 "ONES" => Ok(Lit::Vec4(Vec4::ONE)),
+                "ZEROS" => Ok(Lit::Vec4(Vec4::ZERO)),
                 "PI" => Ok(Lit::F32(std::f32::consts::PI)),
                 "E" => Ok(Lit::F32(std::f32::consts::E)),
                 "IDENTITY" => Ok(Lit::Mat4x4(Mat4::IDENTITY)),
@@ -478,11 +488,12 @@ mod tests {
     #[test]
     fn try_eval_block_tuple() {
         let block = parse_block(r#"{
-            let x: f32 = 4;
-            select((x + 2, 5), (2, x), x < x + 1)
+            let v: vec4 = 2 * vec4(1, 2, 3, 4);
+            let x: f32 = v.z;
+            select((x + 2, 5 * ZEROS), (-Infinity, x * ONES), x < x + 1)
         }"#).unwrap();
 
-        let (min, max): (f32, f32) = block.eval_into().unwrap();
+        let (min, max): (f32, Vec4) = block.eval_into().unwrap();
 
         println!("Eval: ({}, {})", min, max);
     }
