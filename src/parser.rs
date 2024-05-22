@@ -109,6 +109,24 @@ impl Document {
         self.parse_and_merge(parsed.next().unwrap())
     }
 
+    pub fn merge(&mut self, other: Document) {
+        let Document {
+            classes: mut other_classes,
+            interfaces: mut other_interfaces
+        } = other;
+
+        self.classes.retain(|Class { name, .. }| {
+            !other_classes.iter().any(|Class { name: other_name, .. }| name == other_name)
+        });
+
+        self.interfaces.retain(|Interface { name, .. }| {
+            !other_interfaces.iter().any(|Interface { name: other_name, .. }| name == other_name)
+        });
+
+        self.classes.append(&mut other_classes);
+        self.interfaces.append(&mut other_interfaces);
+    }
+
     pub fn get_interface(&self, name: impl AsRef<str>) -> Option<&Interface> {
         self.interfaces.iter().find(
             |Interface { name: name2, .. }| name2.as_str() == name.as_ref()
