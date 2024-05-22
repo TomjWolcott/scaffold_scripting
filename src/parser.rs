@@ -175,6 +175,7 @@ impl Parse for Document {
 
         for pair in pair.into_inner() {
             match pair.as_rule() {
+                Rule::EOI => break,
                 Rule::class => {
                     let class = Class::parse(pair)?;
                     classes.push(class);
@@ -1237,8 +1238,8 @@ mod tests {
         let script =
             r#"
             interface Sdf {
-                sdf(vector: Vec4) -> f32,
-                grad(vector: Vec4) -> Vec4 {
+                sdf(vector: vec4) -> f32,
+                grad(vector: vec4) -> vec4 {
                     abc
                 }
             }
@@ -1249,21 +1250,21 @@ mod tests {
             class Shell {
                 offset: f32,
                 shape: Class,
-                Proj::proj<shape: Proj>(vector: Vec4) -> Vec4 {
-                    let proj: Vec4 = shape.proj(vector);
+                Proj::proj<shape: Proj>(vector: vec4) -> vec4 {
+                    let proj: vec4 = shape.proj(vector);
 
                     proj + offset * normalize(vector - proj)
                 },
-                Sdf::sdf<shape: Sdf>(vector: Vec4) -> f32 {
+                Sdf::sdf<shape: Sdf>(vector: vec4) -> f32 {
                     abs(shape.sdf(vector)) - offset
                 },
-                Sdf::grad(vector: Vec4) -> Vec4 {
+                Sdf::grad(vector: vec4) -> vec4 {
                     def
                 }
             }
 
             interface Proj {
-                proj(vector: Vec4) -> Vec4
+                proj(vector: vec4) -> vec4
             }
 
             class ShellSphere {
