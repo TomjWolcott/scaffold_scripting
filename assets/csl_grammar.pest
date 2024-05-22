@@ -1,4 +1,4 @@
-ident   =  { LETTER ~ (LETTER | NUMBER)* }
+ident   =  { (LETTER | "_") ~ (LETTER | NUMBER | "_")* }
 ty      =  { "f32" | "vec4" | "bool" | "mat4x4" | "Class" | "()" | "(" ~ w ~ (ty ~ w ~ "," ~ w)+ ~ (ty ~ w)? ~ ")" }
 w       = _{ ("\n" | "\r" | " " | "\t")* }
 binding =  { ident ~ w ~ ":" ~ w ~ ty }

@@ -1251,9 +1251,9 @@ mod tests {
                 offset: f32,
                 shape: Class,
                 Proj::proj<shape: Proj>(vector: vec4) -> vec4 {
-                    let proj: vec4 = shape.proj(vector);
+                    let proj_2938sdc: vec4 = shape.proj(vector);
 
-                    proj + offset * normalize(vector - proj)
+                    proj_2938sdc + offset * normalize(vector - proj_2938sdc)
                 },
                 Sdf::sdf<shape: Sdf>(vector: vec4) -> f32 {
                     abs(shape.sdf(vector)) - offset
