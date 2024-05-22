@@ -723,6 +723,7 @@ pub enum Expr {
     UnaryExpr(String, Box<Expr>),
     Application(String, Vec<Expr>),
     Dot(String, String, Vec<Expr>),
+    Field(Box<Expr>, String),
     Tuple(Vec<Expr>),
     Var(String),
     Lit(Lit),
@@ -731,7 +732,7 @@ pub enum Expr {
 
 impl Parse for Expr {
     fn parse(expr_pair: Pair<Rule>) -> Result<Self, ParseError> {
-        assert_rule!(expr_pair, expr | app | dot | tuple | var | lit | block_expr_wrapper);
+        assert_rule!(expr_pair, expr | app | dot | field | tuple | var | lit | block_expr_wrapper);
         let rule = expr_pair.as_rule();
         let mut expr_pairs = expr_pair.into_inner();
 
@@ -775,6 +776,12 @@ impl Parse for Expr {
                 }
 
                 Expr::Dot(name, method, args)
+            },
+            Rule::field => {
+                let expr = Expr::parse(expr_pairs.next().unwrap())?;
+                let field = expr_pairs.next().unwrap().as_str().to_string();
+
+                Expr::Field(Box::new(expr), field)
             },
             Rule::var => {
                 Expr::Var(expr_pairs.next().unwrap().as_str().to_string())
@@ -824,6 +831,9 @@ impl Display for Expr {
                 }
 
                 write!(f, ")")
+            },
+            Self::Field(name, field) => {
+                write!(f, "{}.{}", name, field)
             },
             Self::Tuple(elements) => {
                 write!(f, "(")?;

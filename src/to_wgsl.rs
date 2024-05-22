@@ -83,6 +83,9 @@ impl ToWgsl for Expr {
                 Ok(format!("{}({})", fn_name, args.join(", ")))
             }
             Expr::Dot(_, _, _) => Err(anyhow!("I'm not supporting dot expressions yet")),
+            Expr::Field(expr, field) => {
+                Ok(format!("{}.{}", expr.to_wgsl_rec(ident_scope, tabs)?, field))
+            }
             Expr::Tuple(_) => Err(anyhow!("Tuples are not supported in WGSL")),
             Expr::Var(var_name) => {
                 if let Some((_, ident)) = ident_scope.iter().rev().find(|(name, _)| name == var_name) {

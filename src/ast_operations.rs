@@ -95,6 +95,9 @@ impl AlphaConvert for Expr {
                     expr.alpha_convert(&mut scope.clone());
                 }
             }
+            Expr::Field(expr, _) => {
+                expr.alpha_convert(&mut scope.clone());
+            }
             Expr::Tuple(exprs) => {
                 for expr in exprs.iter_mut() {
                     expr.alpha_convert(&mut scope.clone());
@@ -157,6 +160,7 @@ impl Expr {
             Expr::BinExpr(expr1, _, expr2) => {
                 vec![expr1.promote_blocks(), expr2.promote_blocks()].into_iter().flatten().collect()
             }
+            Expr::Field(expr, _) |
             Expr::UnaryExpr(_, expr) => {
                 expr.promote_blocks()
             }
