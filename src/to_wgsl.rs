@@ -75,7 +75,7 @@ impl ToWgsl for Stmt {
         match self {
             Stmt::Declare(Binding(var_name, ty), expr) => {
                 ident_scope.push((var_name.clone(), var_name.clone()));
-                Ok(format!("let {}: {} = {};\n", var_name, ty.wgsl_type(), expr.to_wgsl_rec(ident_scope, tabs)?))
+                Ok(format!("var {}: {} = {};\n", var_name, ty.wgsl_type(), expr.to_wgsl_rec(ident_scope, tabs)?))
             }
             Stmt::Assign(var_name, expr) => {
                 Ok(format!("{} = {};\n", var_name, expr.to_wgsl_rec(ident_scope, tabs)?))
