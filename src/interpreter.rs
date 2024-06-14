@@ -395,6 +395,29 @@ impl Eval for Expr {
                     // distance fn
                     ("distance", &[Lit::Vec4(v1), Lit::Vec4(v2)]) => Ok(Lit::F32(v1.distance(v2))),
 
+                    ("mix", &[Lit::F32(f1), Lit::F32(f2), Lit::F32(t)]) => Ok(Lit::F32(f1 * (1.0 - t) + f2 * t)),
+                    ("mix", &[Lit::Vec4(v1), Lit::Vec4(v2), Lit::F32(t)]) => Ok(Lit::Vec4(v1 * (1.0 - t) + v2 * t)),
+                    ("mix", &[Lit::Mat4x4(m1), Lit::Mat4x4(m2), Lit::F32(t)]) => Ok(Lit::Mat4x4(m1 * (1.0 - t) + m2 * t)),
+
+                    ("step", &[Lit::F32(edge), Lit::F32(x)]) => Ok(Lit::F32(if x < edge { 0.0 } else { 1.0 })),
+                    ("step", &[Lit::Vec4(edge), Lit::Vec4(x)]) => Ok(Lit::Vec4(Vec4::new(
+                        if x.x < edge.x { 0.0 } else { 1.0 },
+                        if x.y < edge.y { 0.0 } else { 1.0 },
+                        if x.z < edge.z { 0.0 } else { 1.0 },
+                        if x.w < edge.w { 0.0 } else { 1.0 },
+                    ))),
+
+                    ("smoothstep", &[Lit::F32(edge0), Lit::F32(edge1), Lit::F32(x)]) => {
+                        let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+                        Ok(Lit::F32(t * t * (3.0 - 2.0 * t)))
+                    },
+                    ("smoothstep", &[Lit::Vec4(edge0), Lit::Vec4(edge1), Lit::Vec4(x)]) => {
+                        let t = ((x - edge0) / (edge1 - edge0)).clamp(Vec4::ZERO, Vec4::ONE);
+                        Ok(Lit::Vec4(t * t * (Vec4::ONE * 3.0 - Vec4::ONE * 2.0 * t)))
+                    },
+
+                    ("abs", &[Lit::F32(f)]) => Ok(Lit::F32(f.abs())),
+                    ("abs",
                     ("max", &[Lit::F32(f1), Lit::F32(f2)]) => Ok(Lit::F32(f1.max(f2))),
                     ("min", &[Lit::F32(f1), Lit::F32(f2)]) => Ok(Lit::F32(f1.min(f2))),
                     ("max", &[Lit::Vec4(v1), Lit::Vec4(v2)]) => Ok(Lit::Vec4(v1.max(v2))),
