@@ -320,6 +320,9 @@ impl Eval for Expr {
                     (Lit::Vec4(v), "*", Lit::F32(n)) => Ok(Lit::Vec4(v * n)),
                     (Lit::Vec4(v), "/", Lit::F32(n)) => Ok(Lit::Vec4(v / n)),
 
+                    (Lit::Mat4x4(m), "*", Lit::Mat4x4(m2)) => Ok(Lit::Mat4x4(m * m2)),
+                    (Lit::Mat4x4(m), "*", Lit::F32(n)) => Ok(Lit::Mat4x4(m * n)),
+                    (Lit::F32(n), "*", Lit::Mat4x4(m)) => Ok(Lit::Mat4x4(n * m)),
                     (Lit::Mat4x4(m), "*", Lit::Vec4(v)) => Ok(Lit::Vec4(m * v)),
                     (Lit::F32(n), "%", Lit::F32(n2)) => Ok(Lit::F32(n % n2)),
                     (Lit::Vec4(v), "%", Lit::Vec4(v2)) => Ok(Lit::Vec4(v % v2)),
@@ -447,6 +450,17 @@ impl Eval for Expr {
                 (Lit::Vec4(v), "z") => Ok(Lit::F32(v.z)),
                 (Lit::Vec4(v), "w") => Ok(Lit::F32(v.w)),
                 (lit, field_name) => Err(anyhow!("Field {field_name} not found in {lit}"))
+            }
+            Expr::TupleAccess(expr, index) => match expr.eval(scope)? {
+                Lit::Tuple(fields) => {
+                    let index = *index as usize;
+                    if index < fields.len() {
+                        Ok(fields[index].clone())
+                    } else {
+                        Err(anyhow!("Index out of bounds for tuple, tried to access index {index} in a {}-tuple", fields.len()))
+                    }
+                },
+                lit => Err(anyhow!("Tuple access not supported for {}", lit.get_type()))
             }
             Expr::Tuple(elements) => {
                 Ok(Lit::Tuple(elements.iter().map(|expr| expr.eval(scope)).collect::<AnyResult<Vec<_>>>()?))

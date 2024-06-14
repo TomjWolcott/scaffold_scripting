@@ -740,6 +740,7 @@ pub enum Expr {
     Application(String, Vec<Expr>),
     Dot(String, String, Vec<Expr>),
     Field(Box<Expr>, String),
+    TupleAccess(Box<Expr>, usize),
     Tuple(Vec<Expr>),
     Var(String),
     Lit(Lit),
@@ -748,7 +749,7 @@ pub enum Expr {
 
 impl Parse for Expr {
     fn parse(expr_pair: Pair<Rule>) -> Result<Self, ParseError> {
-        assert_rule!(expr_pair, expr | app | dot | field | tuple | var | lit | block_expr_wrapper);
+        assert_rule!(expr_pair, expr | app | dot | field | tuple_access | tuple | var | lit | block_expr_wrapper);
         let rule = expr_pair.as_rule();
         let mut expr_pairs = expr_pair.into_inner();
 
@@ -798,6 +799,12 @@ impl Parse for Expr {
                 let field = expr_pairs.next().unwrap().as_str().to_string();
 
                 Expr::Field(Box::new(expr), field)
+            },
+            Rule::tuple_access => {
+                let expr = Expr::parse(expr_pairs.next().unwrap())?;
+                let index = expr_pairs.next().unwrap().as_str().parse().unwrap();
+
+                Expr::TupleAccess(Box::new(expr), index)
             },
             Rule::var => {
                 Expr::Var(expr_pairs.next().unwrap().as_str().to_string())
@@ -850,6 +857,9 @@ impl Display for Expr {
             },
             Self::Field(name, field) => {
                 write!(f, "{}.{}", name, field)
+            },
+            Self::TupleAccess(expr, index) => {
+                write!(f, "{}.{}", expr, index)
             },
             Self::Tuple(elements) => {
                 write!(f, "(")?;
@@ -1296,7 +1306,7 @@ mod tests {
             let a: (f32, f32) = (1.0, 2.0);
             let b: (f32, (f32, f32), mat4x4) = (1.0, (1 + 3, -.1 + 8), 3 * mat4x4(X, Z, Y, W));
             let c: (f32, vec4, f32, f32) = (1.0, vec4(1, 3, 2, 1) / 8, 3.0, 4.0);
-            b
+            b.1
         }"#;
 
         let block = parse_block(script).unwrap();

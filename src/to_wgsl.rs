@@ -106,6 +106,7 @@ impl ToWgsl for Expr {
             Expr::Field(expr, field) => {
                 Ok(format!("{}.{}", expr.to_wgsl_rec(ident_scope, tabs)?, field))
             }
+            Expr::TupleAccess(_, _) => Err(anyhow!("Tuple access is not supported in WGSL")),
             Expr::Tuple(_) => Err(anyhow!("Tuples are not supported in WGSL")),
             Expr::Var(var_name) => {
                 if let Some((_, ident)) = ident_scope.iter().rev().find(|(name, _)| name == var_name) {

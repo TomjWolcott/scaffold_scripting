@@ -30,16 +30,18 @@ method   = {
 
 block_wrapper = { block }
 block = { "{" ~ w ~ (stmt ~ w)* ~ (expr ~ w)? ~ "}" }
-stmt  = { (decl | asgn | (expr ~ ";")) }
+stmt  = { (decl | asgn | (expr ~ ";")) } // TODO: Add pattern matching for destructuring declares
     decl = { "let" ~ w ~ binding ~ w ~ "=" ~ w ~ expr ~ w ~ ";" }
     asgn = { ident ~ w ~ "=" ~ w ~ expr ~ ";" }
 
 expr = { (prec4) }
     exprs = { "(" ~ w ~ (expr ~ w ~ "," ~ w)* ~ (expr ~ w)? ~ ")" }
-    prec0 = { "(" ~ w ~ prec4 ~ w ~ ")" | app | dot | field | tuple | lit | var | block_expr_wrapper }
+    prec0 = { "(" ~ w ~ prec4 ~ w ~ ")" | app | dot | field | tuple_access | tuple | lit | var | block_expr_wrapper }
         app       = { ident ~ w ~ exprs }
         dot       = { ident ~ "." ~ ident ~ exprs }
         field      = { (var) ~ "." ~ ident } // TODO: Expand this to support nested fields
+        tuple_access = { (var | tuple) ~ "." ~ tuple_id }
+            tuple_id = { NUMBER+ }
         tuple     = { "(" ~ w ~ (expr ~ w ~ "," ~ w)+ ~ (expr ~ w)? ~ ")" }
         var       = { ident }
         lit       = { (number | bool) }

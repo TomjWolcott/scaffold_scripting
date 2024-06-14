@@ -59,6 +59,7 @@ impl<E> WalkTreeMut<E> for Expr {
                 }
             },
             Expr::Field(expr, _) => expr.walk_tree_mut_with_options(options, func)?,
+            Expr::TupleAccess(expr, _) => expr.walk_tree_mut_with_options(options, func)?,
             Expr::Tuple(elements) => {
                 for element in elements.iter_mut() {
                     element.walk_tree_mut_with_options(options, func)?;
