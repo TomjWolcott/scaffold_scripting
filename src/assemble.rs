@@ -12,9 +12,11 @@ use crate::interpreter::{Eval, Scope};
 
 impl Structure {
     fn get_instance_structure(&self, document: &Document) -> AnyResult<Structure> {
-        let class = document.get_class(&self.name).context("Couldn't find class")?;
+        let class = document.get_class(&self.name)
+            .with_context(|| format!("Couldn't find class {}", self.name))?;
 
-        let instance = class.instance.as_ref().context("No instance found")?;
+        let instance = class.instance.as_ref()
+            .with_context(|| format!("Couldn't find instance on class {}", self.name))?;
 
         Ok(self.create_instance(instance))
     }
@@ -58,7 +60,8 @@ impl Structure {
 
     fn assemble_methods(&self, document: &Document) -> AnyResult<Vec<Method>> {
         let mut methods = Vec::new();
-        let class = document.get_class(&self.name).context("Couldn't find class")?;
+        let class = document.get_class(&self.name)
+            .with_context(|| format!("Couldn't find class {}", self.name))?;
 
         for method in class.methods.iter() {
             methods.push(self.assemble_method(
@@ -85,14 +88,14 @@ impl Structure {
     fn assemble_method_rec(&self, document: &Document, method_key: MethodKey, id: String) -> AnyResult<Method> {
         let mut method = document
             .get_method(&self.name, &method_key)
-            .context("Could not find method")?
+            .with_context(|| format!("Could not find method: {} in {}", method_key, &self.name))?
             .clone();
 
         let bounds = std::mem::replace(&mut method.bounds, Vec::new());
 
         // Traverses in search of __fieldName__.__methodName__(...) to replace with the method
         method.body.walk_tree_mut(&mut |node| {
-            let TreeNodeMut::Expr(expr) = node else { return Ok(()) };
+            let TreeNodeMut::Expr(expr) = node else { return Ok::<(), anyhow::Error>(()) };
             match expr {
                 Expr::Var(var) => {
                     if self.get_field(&var).is_some() || var.starts_with("__") {
@@ -102,10 +105,15 @@ impl Structure {
                     Ok(())
                 },
                 Expr::Dot(field_name, method_name, args) => {
-                    let bound = &bounds.iter().find(|Bound { name, .. }| field_name == name).context("Couldn't find bound")?;
-                    let interface = bound.get_interface_with_method(document, &method_name).context("Couldn't get interface")?;
+                    let bound = &bounds.iter()
+                        .find(|Bound { name, .. }| field_name == name)
+                        .with_context(|| format!("Couldn't find used method {method_name} in method bounds {bounds:?} used in {method_key} in {}", &self.name))?;
+
+                    let interface = bound.get_interface_with_method(document, &method_name)
+                        .with_context(|| format!("Couldn't get interface with method {method_name:?} using bound {bound} used in {method_key} in {}", &self.name))?;
+
                     let Some(Field::Structure(structure)) = self.get_field(&field_name) else {
-                        return Err(anyhow!("Couldn't get field"));
+                        return Err(anyhow!("Couldn't find field {field_name} used in {method_key} in {} -OR- The field is not a structure", &self.name))
                     };
 
                     let Method { mut body, inputs, .. } = structure.assemble_method_rec(

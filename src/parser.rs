@@ -351,6 +351,16 @@ impl MethodKey {
     }
 }
 
+impl Display for MethodKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(impl_name) = &self.0 {
+            write!(f, "{}::", impl_name)?;
+        }
+
+        write!(f, "{}", self.1)
+    }
+}
+
 impl Class {
     pub fn get_method(&self, key: &MethodKey) -> Option<&Method> {
         self.methods.iter().find(|Method { implementation, name, .. }| {

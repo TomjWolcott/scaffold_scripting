@@ -7,40 +7,40 @@ pub fn get_test_stuff(opt1: usize, opt2: usize) -> (Document, Structure) {
     let doc_str = match opt1 {
         0 => r#"
         interface Proj {
-            proj(vector: Vec4) -> Vec4
+            proj(vector: vec4) -> vec4
         }
 
         interface Sdf {
-            sdf(vector: Vec4) -> f32
+            sdf(vector: vec4) -> f32
         }
 
         class Sphere4D {
             radius: f32,
-            Proj::proj(vector: Vec4) -> Vec4 {
+            Proj::proj(vector: vec4) -> vec4 {
                 radius * normalize(vector)
             },
-            Sdf::sdf(vector: Vec4) -> f32 {
+            Sdf::sdf(vector: vec4) -> f32 {
                 length(vector) - radius
             }
         }
 
         class Plane4D {
-            normal: Vec4,
-            Proj::proj(vector: Vec4) -> Vec4 {
+            normal: vec4,
+            Proj::proj(vector: vec4) -> vec4 {
                 vector - dot(vector, normal) * normal
             },
-            Sdf::sdf(vector: Vec4) -> f32 {
+            Sdf::sdf(vector: vec4) -> f32 {
                 dot(vector, normal)
             }
         }
 
         class Shift {
-            shift: Vec4,
+            shift: vec4,
             shape: Class,
-            Proj::proj<shape: Proj>(vector: Vec4) -> Vec4 {
+            Proj::proj<shape: Proj>(vector: vec4) -> vec4 {
                 shape.proj(vector - shift) + shift
             },
-            Sdf::sdf<shape: Sdf>(vector: Vec4) -> f32 {
+            Sdf::sdf<shape: Sdf>(vector: vec4) -> f32 {
                 shape.sdf(vector - shift)
             }
         }
@@ -48,7 +48,7 @@ pub fn get_test_stuff(opt1: usize, opt2: usize) -> (Document, Structure) {
         class Union {
             shape1: Class,
             shape2: Class,
-            Proj::proj<shape1: Proj + Sdf, shape2: Proj + Sdf>(vector: Vec4) -> Vec4 {
+            Proj::proj<shape1: Proj + Sdf, shape2: Proj + Sdf>(vector: vec4) -> vec4 {
                 shape1.proj((5 + shape2.sdf(vector)) * shape2.proj(vector)) * shape1.sdf(vector)
             }
         }
