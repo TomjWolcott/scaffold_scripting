@@ -415,9 +415,6 @@ impl Eval for Expr {
                         let t = ((x - edge0) / (edge1 - edge0)).clamp(Vec4::ZERO, Vec4::ONE);
                         Ok(Lit::Vec4(t * t * (Vec4::ONE * 3.0 - Vec4::ONE * 2.0 * t)))
                     },
-
-                    ("abs", &[Lit::F32(f)]) => Ok(Lit::F32(f.abs())),
-                    ("abs",
                     ("max", &[Lit::F32(f1), Lit::F32(f2)]) => Ok(Lit::F32(f1.max(f2))),
                     ("min", &[Lit::F32(f1), Lit::F32(f2)]) => Ok(Lit::F32(f1.min(f2))),
                     ("max", &[Lit::Vec4(v1), Lit::Vec4(v2)]) => Ok(Lit::Vec4(v1.max(v2))),
