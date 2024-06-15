@@ -182,7 +182,9 @@ impl AssembledStructure {
         self.evaluated_scope = Scope::new();
 
         for (name, expr) in self.fields.iter() {
-            self.evaluated_scope.push(name.clone(), expr.eval(&mut scope)?);
+            let lit = expr.eval(&mut scope)?;
+            self.evaluated_scope.push(name.clone(), lit.clone());
+            scope.push(name.clone(), lit);
         }
 
         Ok(())
@@ -225,7 +227,8 @@ impl Display for AssembledStructure {
 #[cfg(test)]
 mod tests {
     use crate::assemble::AssembledStructure;
-    use crate::parser::MethodKey;
+    use crate::parser::{Lit, MethodKey};
+    use crate::prelude::Scope;
     use crate::test_helpers;
     use crate::test_helpers::{better_prettify, prettify_string};
 
@@ -249,8 +252,12 @@ mod tests {
         let (document, structure) = test_helpers::get_test_stuff(0, 2);
         println!("Document: {document}\nStructure: {structure}");
 
-        let assembled_structure = AssembledStructure::new(&document, structure).unwrap();
+        let mut assembled_structure = AssembledStructure::new(&document, structure).unwrap();
 
         println!("Assembled not pretty: {assembled_structure}\nAssembled Structure: {}", better_prettify(format!("{assembled_structure}")));
+
+        assembled_structure.evaluate_fields(Scope::from_vars([("abc".to_string(), Lit::F32(1.0))])).unwrap();
+
+        println!("Assembled Structure after fields are evaluated: {}", better_prettify(format!("{assembled_structure}")));
     }
 }

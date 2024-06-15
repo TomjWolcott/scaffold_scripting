@@ -169,6 +169,10 @@ impl Scope {
         Self(Vec::new())
     }
 
+    pub fn from_vars(vars: impl IntoIterator<Item = (String, Lit)>) -> Self {
+        Self(vars.into_iter().collect())
+    }
+
     pub fn get(&self, name: impl AsRef<str>) -> Option<&Lit> {
         self.0.iter().find(|(n, _)| n.as_str() == name.as_ref()).map(|(_, field)| field)
     }
