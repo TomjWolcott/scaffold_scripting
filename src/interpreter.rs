@@ -499,6 +499,7 @@ impl Eval for Expr {
                 "PI" => Ok(Lit::F32(std::f32::consts::PI)),
                 "E" => Ok(Lit::F32(std::f32::consts::E)),
                 "IDENTITY" => Ok(Lit::Mat4x4(Mat4::IDENTITY)),
+                "INFINITY" => Ok(Lit::F32(f32::INFINITY)),
                 var_string => scope.get(var_string).with_context(|| format!("var {var} not found in scope")).cloned()
             },
             Expr::Lit(lit) => Ok(lit.clone()),
