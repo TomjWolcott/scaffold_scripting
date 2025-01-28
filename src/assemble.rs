@@ -2,11 +2,11 @@ use std::fmt;
 use std::fmt::{Display, Formatter};
 use crate::parser::{Bound, Document, Expr, Instance, KeyVal, Method, MethodKey, Stmt, Value as ParseValue};
 use crate::structure::{Field, Structure, TryFromRonValue};
-use crate::tree_walk::{TreeNodeMut, WalkTreeMut};
+use crate::tree_walk::{TreeNodeMut, WalkTree};
 
 use anyhow::{anyhow, Context, Result as AnyResult};
 use ron::Value;
-use crate::ast_operations::{AlphaConvert, IdentScope};
+use crate::ast_operations::{AlphaConvert, default_ident_generator, IdentScope};
 use crate::interpreter::{Eval, Scope};
 
 
@@ -76,7 +76,7 @@ impl Structure {
     /// Assembles a method to inline trait fn calls and perform some small optimizations
     fn assemble_method(&self, document: &Document, method_key: MethodKey) -> AnyResult<Method> {
         self.assemble_method_rec(document, method_key, "".to_string()).map(|mut method| {
-            method.body.alpha_convert(&mut IdentScope::new());
+            method.body.alpha_convert(&mut default_ident_generator, &mut IdentScope::new());
             method.body.inline_blocks();
             method.body.cull_single_use_vars();
             method.body.cull_noops();
@@ -121,7 +121,7 @@ impl Structure {
                     )?;
 
                     for (arg, binding) in args.iter().zip(inputs).rev() {
-                        body.0.insert(0, Stmt::Declare(binding, arg.clone()));
+                        body.0.insert(0, Stmt::Declare(false, binding, arg.clone()));
                     }
 
                     *expr = Expr::Block(Box::new(body));

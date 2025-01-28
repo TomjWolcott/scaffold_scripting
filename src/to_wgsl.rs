@@ -73,9 +73,9 @@ impl ToWgsl for Block {
 impl ToWgsl for Stmt {
     fn to_wgsl_rec(&self, ident_scope: &mut Vec<(String, String)>, tabs: usize) -> AnyResult<String> {
         match self {
-            Stmt::Declare(Binding(var_name, ty), expr) => {
+            Stmt::Declare(mutable, Binding(var_name, ty), expr) => {
                 ident_scope.push((var_name.clone(), var_name.clone()));
-                Ok(format!("var {}: {} = {};\n", var_name, ty.wgsl_type(), expr.to_wgsl_rec(ident_scope, tabs)?))
+                Ok(format!("{} {}: {} = {};\n", if *mutable { "var" } else { "let" }, var_name, ty.wgsl_type(), expr.to_wgsl_rec(ident_scope, tabs)?))
             }
             Stmt::Assign(var_name, expr) => {
                 Ok(format!("{} = {};\n", var_name, expr.to_wgsl_rec(ident_scope, tabs)?))
@@ -144,6 +144,8 @@ impl ToWgsl for Lit {
 #[cfg(test)]
 mod tests {
     use crate::assemble::AssembledStructure;
+    use crate::interpreter::{Eval, Scope};
+    use crate::test_helpers;
     use super::*;
     use crate::test_helpers::*;
 
@@ -154,6 +156,21 @@ mod tests {
         let method = assembled_structure.get_method("proj").unwrap();
 
         assert_eq!(method.to_wgsl(&mut Vec::new()).unwrap(), "fn proj(vector: vec4) -> vec4 {\n    let vector_00004: vec4 = ((5 + (length((vector - __shape2__shift)) - __shape2____shape__radius)) * ((__shape2____shape__radius * normalize((vector - __shape2__shift))) + __shape2__shift));\n    return ((vector_00004 - (dot(vector_00004, __shape1__normal) * __shape1__normal)) * dot(vector, __shape1__normal));\n}");
+    }
+
+    #[test]
+    fn test_mut() {
+        let script = r#"{
+            let a: f32 = 1.0;
+            let mut b: f32 = 2.0;
+            b = a + b;
+            b
+        }"#;
+
+        let mut block = parse_block(script).unwrap();
+        let string = block.to_wgsl(&mut Vec::new()).unwrap();
+
+        assert_eq!(&string[..], "{\n    let a: f32 = 1.0;\n    var b: f32 = 2.0;\n    b = (a + b);\n    return b;\n}");
     }
 
     #[test]

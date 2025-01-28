@@ -1,5 +1,7 @@
 use std::fmt::Display;
+use crate::interpreter::{Eval, Scope};
 use crate::parser::*;
+use crate::test_helpers;
 
 #[derive(Default, Clone, Copy)]
 pub struct Options {
@@ -13,7 +15,15 @@ pub enum RecOrdering {
     Postorder
 }
 
-pub trait WalkTreeMut<E> {
+pub trait WalkTree<E> {
+    /// Defaults to pre-order
+    fn walk_tree(&self, func: &mut impl for<'a> FnMut(TreeNode<'a>) -> Result<(), E>) -> Result<(), E> {
+        self.walk_tree_with_options(Options::default(), func)
+    }
+
+    fn walk_tree_with_options(&self, options: Options, func: &mut impl for<'a> FnMut(TreeNode<'a>) -> Result<(), E>) -> Result<(), E>;
+
+    /// Defaults to pre-order
     fn walk_tree_mut(&mut self, func: &mut impl for<'a> FnMut(TreeNodeMut<'a>) -> Result<(), E>) -> Result<(), E> {
         self.walk_tree_mut_with_options(Options::default(), func)
     }
@@ -21,12 +31,27 @@ pub trait WalkTreeMut<E> {
     fn walk_tree_mut_with_options(&mut self, options: Options, func: &mut impl for<'a> FnMut(TreeNodeMut<'a>) -> Result<(), E>) -> Result<(), E>;
 }
 
-impl<E> WalkTreeMut<E> for Stmt {
+impl<E> WalkTree<E> for Stmt {
+    fn walk_tree_with_options(&self, options: Options, func: &mut impl for<'a> FnMut(TreeNode<'a>) -> Result<(), E>) -> Result<(), E> {
+        if RecOrdering::Preorder == options.ordering { func(TreeNode::Stmt(self))? };
+
+        match self {
+            Stmt::Declare(_, _, expr) => expr.walk_tree_with_options(options, func)?,
+            Stmt::Assign(_, expr) => expr.walk_tree_with_options(options, func)?,
+            Stmt::Expr(expr) => expr.walk_tree_with_options(options, func)?,
+            Stmt::Noop => {}
+        };
+
+        if RecOrdering::Postorder == options.ordering { func(TreeNode::Stmt(self))? };
+
+        Ok(())
+    }
+
     fn walk_tree_mut_with_options(&mut self, options: Options, func: &mut impl for<'a> FnMut(TreeNodeMut<'a>) -> Result<(), E>) -> Result<(), E> {
         if RecOrdering::Preorder == options.ordering { func(TreeNodeMut::Stmt(self))? };
 
         match self {
-            Stmt::Declare(_, expr) => expr.walk_tree_mut_with_options(options, func)?,
+            Stmt::Declare(_, _, expr) => expr.walk_tree_mut_with_options(options, func)?,
             Stmt::Assign(_, expr) => expr.walk_tree_mut_with_options(options, func)?,
             Stmt::Expr(expr) => expr.walk_tree_mut_with_options(options, func)?,
             Stmt::Noop => {}
@@ -38,7 +63,43 @@ impl<E> WalkTreeMut<E> for Stmt {
     }
 }
 
-impl<E> WalkTreeMut<E> for Expr {
+impl<E> WalkTree<E> for Expr {
+    fn walk_tree_with_options(&self, options: Options, func: &mut impl for<'a> FnMut(TreeNode<'a>) -> Result<(), E>) -> Result<(), E> {
+        if RecOrdering::Preorder == options.ordering { func(TreeNode::Expr(self))? };
+
+        match self {
+            Expr::BinExpr(lhs, _, rhs) => {
+                lhs.walk_tree_with_options(options, func)?;
+                rhs.walk_tree_with_options(options, func)?;
+            },
+            Expr::UnaryExpr(_, expr) => expr.walk_tree_with_options(options, func)?,
+            Expr::Application(_, args) => {
+                for arg in args.iter() {
+                    arg.walk_tree_with_options(options, func)?;
+                }
+            },
+            Expr::Dot(_, _, args) => {
+                for arg in args.iter() {
+                    arg.walk_tree_with_options(options, func)?;
+                }
+            },
+            Expr::Field(expr, _) => expr.walk_tree_with_options(options, func)?,
+            Expr::TupleAccess(expr, _) => expr.walk_tree_with_options(options, func)?,
+            Expr::Tuple(elements) => {
+                for element in elements.iter() {
+                    element.walk_tree_with_options(options, func)?;
+                }
+            }
+            Expr::Var(_) => {},
+            Expr::Lit(_) => {},
+            Expr::Block(block) => block.walk_tree_with_options(options, func)?
+        }
+
+        if RecOrdering::Postorder == options.ordering { func(TreeNode::Expr(self))? };
+
+        Ok(())
+    }
+
     fn walk_tree_mut_with_options(&mut self, options: Options, func: &mut impl for<'a> FnMut(TreeNodeMut<'a>) -> Result<(), E>) -> Result<(), E> {
         if RecOrdering::Preorder == options.ordering { func(TreeNodeMut::Expr(self))? };
 
@@ -76,7 +137,23 @@ impl<E> WalkTreeMut<E> for Expr {
     }
 }
 
-impl<E> WalkTreeMut<E> for Block {
+impl<E> WalkTree<E> for Block {
+    fn walk_tree_with_options(&self, options: Options, func: &mut impl for<'a> FnMut(TreeNode<'a>) -> Result<(), E>) -> Result<(), E> {
+        if RecOrdering::Preorder == options.ordering { func(TreeNode::Block(self))? };
+
+        for stmt in self.0.iter() {
+            stmt.walk_tree_with_options(options, func)?;
+        }
+
+        if let Some(expr) = &self.1 {
+            expr.walk_tree_with_options(options, func)?;
+        }
+
+        if RecOrdering::Postorder == options.ordering { func(TreeNode::Block(self))? };
+
+        Ok(())
+    }
+
     fn walk_tree_mut_with_options(&mut self, options: Options, func: &mut impl for<'a> FnMut(TreeNodeMut<'a>) -> Result<(), E>) -> Result<(), E> {
         if RecOrdering::Preorder == options.ordering { func(TreeNodeMut::Block(self))? };
 
@@ -91,6 +168,24 @@ impl<E> WalkTreeMut<E> for Block {
         if RecOrdering::Postorder == options.ordering { func(TreeNodeMut::Block(self))? };
 
         Ok(())
+    }
+}
+
+
+#[derive(Debug)]
+pub enum TreeNode<'a> {
+    Stmt(&'a Stmt),
+    Expr(&'a Expr),
+    Block(&'a Block)
+}
+
+impl Display for crate::prelude::TreeNode<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            crate::prelude::TreeNode::Stmt(stmt) => write!(f, "{}", stmt),
+            crate::prelude::TreeNode::Expr(expr) => write!(f, "{}", expr),
+            crate::prelude::TreeNode::Block(block) => write!(f, "{}", block)
+        }
     }
 }
 

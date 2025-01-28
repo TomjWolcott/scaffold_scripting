@@ -1,4 +1,6 @@
+use std::cmp::Ordering;
 use std::fmt::Display;
+use std::hash::{Hash, Hasher};
 use glam::{Mat4, Vec4};
 use pest::iterators::Pair;
 use pest_derive::Parser;
@@ -629,7 +631,7 @@ pub fn parse_block(script: impl AsRef<str>) -> Result<Block, ParseError> {
     Block::parse(parsed.next().unwrap().into_inner().next().unwrap())
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Hash, Eq, PartialOrd)]
 pub struct Block(pub Vec<Stmt>, pub Option<Expr>);
 
 impl Parse for Block {
@@ -676,9 +678,9 @@ impl Display for Block {
 }
 
 // stmt  = { (decl | asgn | (expr ~ ";")) }
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Hash, Eq, PartialOrd)]
 pub enum Stmt {
-    Declare(Binding, Expr),
+    Declare(bool, Binding, Expr),
     Assign(String, Expr),
     Expr(Expr),
     Noop,
@@ -693,14 +695,26 @@ impl Parse for Stmt {
         let rule = pair.as_rule();
 
         Ok(match rule {
+            // check for mut
             Rule::decl => {
                 let mut pairs = pair.into_inner();
-                assert_pairs!(pairs, 2);
+                assert_pairs!(pairs, 2..=3);
 
-                Stmt::Declare(
-                    Binding::parse(pairs.next().unwrap())?,
-                    Expr::parse(pairs.next().unwrap())?
-                )
+                let first_pair = pairs.next().unwrap();
+
+                if first_pair.as_rule() == Rule::mutable {
+                    Stmt::Declare(
+                        true,
+                        Binding::parse(pairs.next().unwrap())?,
+                        Expr::parse(pairs.next().unwrap())?
+                    )
+                } else {
+                    Stmt::Declare(
+                        false,
+                        Binding::parse(first_pair)?,
+                        Expr::parse(pairs.next().unwrap())?
+                    )
+                }
             },
             Rule::asgn => {
                 let mut pairs = pair.into_inner();
@@ -722,8 +736,8 @@ impl Parse for Stmt {
 impl Display for Stmt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Declare(binding, expr) => {
-                write!(f, "let {} = {};", binding, expr)
+            Self::Declare(mutable, binding, expr) => {
+                write!(f, "let {}{} = {};", if *mutable { "mut " } else { "" }, binding, expr)
             },
             Self::Assign(name, expr) => {
                 write!(f, "{} = {};", name, expr)
@@ -743,7 +757,7 @@ pub fn parse_expr(script: impl AsRef<str>) -> Result<Expr, ParseError> {
     Expr::parse(parsed.next().unwrap())
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Hash, Eq, PartialOrd)]
 pub enum Expr {
     BinExpr(Box<Expr>, String, Box<Expr>),
     UnaryExpr(String, Box<Expr>),
@@ -974,7 +988,7 @@ impl Op {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Hash, PartialOrd)]
 pub struct Binding(pub String, pub Type);
 
 impl Parse for Binding {
@@ -1000,7 +1014,7 @@ impl Display for Binding {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Hash, Eq, PartialOrd)]
 pub enum Type {
     Bool,
     F32,
@@ -1122,6 +1136,68 @@ impl Parse for Lit {
             }
         }
     }
+}
+
+impl Eq for Lit {}
+
+fn compare_lists<T: PartialOrd>(list1: &[T], list2: &[T]) -> Option<Ordering> {
+    if list1.len() != list2.len() {
+        return None;
+    }
+
+    for (element1, element2) in list1.iter().zip(list2.iter()) {
+        if let Some(ord) = element1.partial_cmp(element2) {
+            if ord != Ordering::Equal {
+                return Some(ord);
+            }
+        }
+    }
+
+    Some(Ordering::Equal)
+}
+
+impl PartialOrd for Lit {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match (self, other) {
+            (Self::F32(num1), Self::F32(num2)) => num1.partial_cmp(num2),
+            (Self::Bool(b1), Self::Bool(b2)) => b1.partial_cmp(b2),
+            (Self::Vec4(vec1), Self::Vec4(vec2)) => {
+                compare_lists(&vec1.to_array(), &vec2.to_array())
+            },
+            (Self::Mat4x4(mat1), Self::Mat4x4(mat2)) => {
+                compare_lists(&mat1.to_cols_array(), &mat2.to_cols_array())
+            },
+            (Self::Tuple(elements1), Self::Tuple(elements2)) => {
+                compare_lists(&elements1, &elements2)
+            },
+            (Self::Unit, Self::Unit) => Some(Ordering::Equal),
+            _ => None
+        }
+    }
+}
+
+impl Hash for Lit {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Self::F32(num) => {
+                state.write_u32(num.to_bits());
+            },
+            Self::Bool(b) => {
+                state.write_u8(*b as u8);
+            },
+            Self::Vec4(vec) => {
+                vec.to_array().into_iter().map(f32::to_bits).collect::<Vec<u32>>().hash(state);
+            },
+            Self::Mat4x4(mat) => {
+                mat.to_cols_array().into_iter().map(f32::to_bits).collect::<Vec<u32>>().hash(state);
+            },
+            Self::Tuple(elements) => {
+                elements.hash(state);
+            },
+            Self::Unit => {}
+        }
+    }
+
 }
 
 impl Display for Lit {
@@ -1323,5 +1399,31 @@ mod tests {
         let string = test_helpers::prettify_string(format!("{block}"));
 
         println!("{}\nwhich returns: {:?}", string, block.eval(&mut Scope::new()));
+    }
+
+    #[test]
+    fn test_hash() {
+        let script1 = r#"{
+            let a: (f32, f32) = (1.0, 2.0);
+            let b: (f32, (f32, f32), mat4x4) = (1.0, (1 + 3, -.1 + 8), 3 * mat4x4(X, Z, Y, W));
+            let c: (f32, vec4, f32, f32) = (1.0, vec4(1, 3, 2, 1) / 8, 3.0, 4.0);
+            a == b.1
+        }"#;
+
+        let block1 = parse_block(script1).unwrap();
+
+        let script2 = r#"{
+            let a:    (f32, f32)   =    (1.0, 2.0);
+            let b:     (f32, (f32, f32), mat4x4)   =   (1.0, (1 +   3,   -.1 + 8), 3 * mat4x4(X, Z, Y, W));
+            let c: (f32, vec4, f32, f32)    =     (1.0,    vec4(1, 3, 2, 1) / 8  ,    3.0,   4.0);
+            a   ==   b.1
+        }"#;
+
+        let block2 = parse_block(script2).unwrap();
+
+        let mut hash_set = std::collections::HashSet::new();
+
+        hash_set.insert(block1);
+        assert!(hash_set.contains(&block2));
     }
 }

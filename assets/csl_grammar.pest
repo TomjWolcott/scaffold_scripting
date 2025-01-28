@@ -31,7 +31,8 @@ method   = {
 block_wrapper = { block }
 block = { "{" ~ w ~ (stmt ~ w)* ~ (expr ~ w)? ~ "}" }
 stmt  = { (decl | asgn | (expr ~ ";")) } // TODO: Add pattern matching for destructuring declares
-    decl = { "let" ~ w ~ binding ~ w ~ "=" ~ w ~ expr ~ w ~ ";" }
+    decl = { "let" ~ w ~ (mutable ~ w)? ~ binding ~ w ~ "=" ~ w ~ expr ~ w ~ ";" }
+        mutable = { "mut" }
     asgn = { ident ~ w ~ "=" ~ w ~ expr ~ ";" }
 
 expr = { (prec4) }
