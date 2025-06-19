@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result as AnyResult};
+use crate::enviroment::SslEnvironment;
 use crate::parser::*;
 
 const TAB: &'static str = "    ";
@@ -12,13 +13,13 @@ pub trait ToWgsl {
 }
 
 impl Method {
-    pub fn to_wgsl_with_fn_name(&self, fn_name: impl AsRef<str>, ident_scope: &mut Vec<(String, String)>, ) -> AnyResult<String> {
+    pub fn to_wgsl_with_fn_name(&self, fn_name: impl AsRef<str>, ident_scope: &mut Vec<(String, String)>, env: &SslEnvironment) -> AnyResult<String> {
         let mut inputs = Vec::new();
 
         for Binding(name, ty) in self.inputs.iter() {
             ident_scope.push((name.clone(), name.clone()));
 
-            inputs.push(format!("{}: {}", name.clone(), ty.wgsl_type()))
+            inputs.push(format!("{}: {}", name.clone(), env.get_wgsl_name(ty).unwrap()));
         }
 
         Ok(format!(

@@ -7,6 +7,7 @@ mod interpreter;
 mod to_wgsl;
 pub mod test_helpers;
 mod utils;
+mod enviroment;
 
 pub mod prelude {
     pub use crate::parser::*;

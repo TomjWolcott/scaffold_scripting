@@ -1,5 +1,5 @@
 ident   =  { (LETTER | "_") ~ (LETTER | NUMBER | "_")* }
-ty      =  { "f32" | "vec4" | "bool" | "mat4x4" | "Class" | "()" | "(" ~ w ~ (ty ~ w ~ "," ~ w)+ ~ (ty ~ w)? ~ ")" }
+ty      =  { "()" | ident | "(" ~ w ~ (ty ~ w ~ "," ~ w)+ ~ (ty ~ w)? ~ ")" }
 w       = _{ ("\n" | "\r" | " " | "\t")* }
 binding =  { ident ~ w ~ ":" ~ w ~ ty }
 COMMENT = _{ ("//" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
@@ -8,7 +8,7 @@ implement = { ident ~ "::" ~ ident }
 bound = { ident ~ w ~ ":" ~ w ~ (ident ~ w ~ "+" ~ w)* ~ ident }
 bounds = { "<" ~ w ~ bound ~ w ~ ("," ~ w ~ bound ~ w)* ~ ">" }
 
-document = { (w ~ (class | interface))* ~ w ~ EOI }
+document = { (w ~ (class | interface | function))* ~ w ~ EOI }
 interface = { "interface" ~ w ~ ident ~ w ~ "{" ~
 		w ~ ((default_method | method_header) ~ w ~ "," ~ w)* ~ (default_method | method_header)? ~ w
 	~ "}"
@@ -27,6 +27,9 @@ class    = {
 method   = {
     (implement | ident) ~ w ~ bounds? ~ w ~ "(" ~ w ~ (binding ~ w ~ "," ~ w)* ~ binding? ~ ")" ~ w ~ "->" ~ w ~ ty ~ w ~ block
 }
+function = { "fn" ~ w ~ ident ~ "(" ~
+    w ~ (binding ~ w ~ "," ~ w)* ~ binding? ~
+")" ~ w ~ "->" ~ w ~ ty ~ w ~ block}
 
 block_wrapper = { block }
 block = { "{" ~ w ~ (stmt ~ w)* ~ (expr ~ w)? ~ "}" }

@@ -162,35 +162,40 @@ impl From<()> for Lit {
 }
 
 #[derive(Debug, Clone)]
-pub struct Scope(Vec<(String, Lit)>);
+pub struct Scope {
+    vars: Vec<(String, Lit)>
+}
 
 impl Scope {
     pub fn new() -> Self {
-        Self(Vec::new())
+
+        Self {
+            vars: Vec::new()
+        }
     }
 
     pub fn from_vars(vars: impl IntoIterator<Item = (String, Lit)>) -> Self {
-        Self(vars.into_iter().collect())
+        Self { vars: vars.into_iter().collect() }
     }
 
     pub fn get(&self, name: impl AsRef<str>) -> Option<&Lit> {
-        self.0.iter().find(|(n, _)| n.as_str() == name.as_ref()).map(|(_, field)| field)
+        self.vars.iter().find(|(n, _)| n.as_str() == name.as_ref()).map(|(_, field)| field)
     }
 
     pub fn get_mut(&mut self, name: impl AsRef<str>) -> Option<&mut Lit> {
-        self.0.iter_mut().find(|(n, _)| n.as_str() == name.as_ref()).map(|(_, field)| field)
+        self.vars.iter_mut().find(|(n, _)| n.as_str() == name.as_ref()).map(|(_, field)| field)
     }
 
     pub fn push(&mut self, name: String, field: Lit) {
-        self.0.push((name, field));
+        self.vars.push((name, field));
     }
 
     pub fn size(&self) -> usize {
-       self.0.len()
+       self.vars.len()
     }
 
     pub fn resize(&mut self, size: usize) {
-        self.0.splice(size.., []);
+        self.vars.splice(size.., []);
     }
 }
 
@@ -198,7 +203,7 @@ impl Display for Scope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{{ ")?;
 
-        for (name, field) in self.0.iter() {
+        for (name, field) in self.vars.iter() {
             write!(f, "{}: {}, ", name, field)?;
         }
 
@@ -224,7 +229,7 @@ impl<'a> Iterator for ScopeIterator<'a> {
     type Item = (&'a String, &'a Lit);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let result = self.scope.0.get(self.index).map(|(name, field)| (name, field));
+        let result = self.scope.vars.get(self.index).map(|(name, field)| (name, field));
         self.index += 1;
         result
     }
@@ -308,7 +313,7 @@ impl Eval for Stmt {
 impl Eval for Expr {
     fn eval(&self, scope: &mut Scope) -> AnyResult<Lit> {
         match self {
-            Expr::BinExpr(left, symbol, right) =>
+            Expr::BinExpr(left, symbol, right) => {
                 match (left.eval(scope)?, symbol.as_str(), right.eval(scope)?) {
                     (Lit::F32(n1), "+", Lit::F32(n2)) => Ok(Lit::F32(n1 + n2)),
                     (Lit::F32(n1), "-", Lit::F32(n2)) => Ok(Lit::F32(n1 - n2)),
@@ -331,7 +336,6 @@ impl Eval for Expr {
                     (Lit::F32(n), "%", Lit::F32(n2)) => Ok(Lit::F32(n % n2)),
                     (Lit::Vec4(v), "%", Lit::Vec4(v2)) => Ok(Lit::Vec4(v % v2)),
 
-
                     // boolean ops
                     (Lit::Bool(b1), "&&", Lit::Bool(b2)) => Ok(Lit::Bool(b1 && b2)),
                     (Lit::Bool(b1), "||", Lit::Bool(b2)) => Ok(Lit::Bool(b1 || b2)),
@@ -342,12 +346,12 @@ impl Eval for Expr {
                     (Lit::F32(n1), "<=", Lit::F32(n2)) => Ok(Lit::Bool(n1 <= n2)),
                     (Lit::F32(n1), ">=", Lit::F32(n2)) => Ok(Lit::Bool(n1 >= n2)),
 
-
                     (f1, symbol, f2) => Err(anyhow!(
                         "Could not find binary operation with signature {} {} {}",
                         f1.get_type(), symbol, f2.get_type()
                     ))
                 }
+            }
             Expr::UnaryExpr(symbol, right) => {
                 match (symbol.as_str(), right.eval(scope)?) {
                     ("-", Lit::F32(n)) => Ok(Lit::F32(-n)),
@@ -365,9 +369,9 @@ impl Eval for Expr {
                 }
             }
             Expr::Application(fn_name, args) => {
-                let inputs = args.iter()
-                    .map(|arg| arg.eval(scope))
-                    .collect::<AnyResult<Vec<_>>>()?;
+                let (input_types, inputs) = args.iter()
+                    .map(|arg| arg.eval(scope).map(|input| (input.get_type(), input)))
+                    .collect::<AnyResult<(Vec<_>, Vec<_>)>>()?;
 
                 match (fn_name.as_str(), &inputs[..]) {
                     //constructors
