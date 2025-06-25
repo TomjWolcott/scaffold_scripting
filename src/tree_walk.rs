@@ -1,4 +1,5 @@
 use std::fmt::Display;
+use crate::enviroment::Environment;
 use crate::parser::*;
 
 #[derive(Default, Clone, Copy)]
@@ -28,6 +29,17 @@ impl<E> WalkTreeMut<E> for Stmt {
         match self {
             Stmt::Declare(_, expr) => expr.walk_tree_mut_with_options(options, func)?,
             Stmt::Assign(_, expr) => expr.walk_tree_mut_with_options(options, func)?,
+            Stmt::IfElse((if_expr, if_block), else_ifs, else_block) => {
+                if_expr.walk_tree_mut_with_options(options, func)?;
+                if_block.walk_tree_mut_with_options(options, func)?;
+                for (expr, block) in else_ifs.iter_mut() {
+                    expr.walk_tree_mut_with_options(options, func)?;
+                    block.walk_tree_mut_with_options(options, func)?;
+                }
+                if let Some(else_block) = else_block {
+                    else_block.walk_tree_mut_with_options(options, func)?;
+                }
+            }
             Stmt::Expr(expr) => expr.walk_tree_mut_with_options(options, func)?,
             Stmt::Noop => {}
         };
@@ -155,7 +167,9 @@ fn walker() {
         }
     "#.to_string();
 
-    let mut document = parse_document(&doc_str).unwrap();
+    let env = Environment::new();
+
+    let mut document = parse_document(&doc_str, &env).unwrap();
 
     let method = document.get_method_mut("Plane4D", &MethodKey::new(Some("Proj"), "proj")).unwrap();
 

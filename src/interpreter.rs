@@ -300,6 +300,25 @@ impl Eval for Stmt {
                     ));
                 }
             }
+            Stmt::IfElse((if_expr, if_block), else_ifs, else_block) => {
+                let iter = [(if_expr, if_block)].into_iter().chain(else_ifs.iter().map(|(a, b)| (a, b)));
+
+                for (expr, block) in iter {
+                    match expr.eval(scope)? {
+                        Lit::Bool(true) => {
+                            block.eval(scope)?;
+
+                            return Ok(Lit::Unit);
+                        }
+                        Lit::Bool(_) => {}
+                        lit => return Err(anyhow!("if statement expr must evaluate to boolean, instead evaluated to {lit}"))
+                    }
+                }
+
+                if let Some(block) = else_block {
+                    block.eval(scope)?;
+                }
+            }
             Stmt::Expr(expr) => {
                 expr.eval(scope)?;
             }
@@ -516,27 +535,30 @@ impl Eval for Expr {
 mod tests {
     use glam::Vec4;
     use crate::assemble::AssembledStructure;
+    use crate::enviroment::Environment;
     use crate::interpreter::{Eval};
     use crate::parser::parse_block;
     use crate::test_helpers::{get_test_stuff, prettify_string};
 
     #[test]
     fn try_eval_block() {
+        let env = Environment::new();
         let block = parse_block(r#"{
             let x: f32 = 4;
             select(x + 2, 2, x < x + 1)
-        }"#).unwrap();
+        }"#, &env).unwrap();
 
         println!("Eval: {}", block.eval_into::<f32>().unwrap())
     }
 
     #[test]
     fn try_eval_block_tuple() {
+        let env = Environment::new();
         let block = parse_block(r#"{
             let v: vec4 = 2 * vec4(1, 2, 3, 4);
             let x: f32 = v.z;
             select((x + 2, 5 * ZEROS), (-Infinity, x * ONES), x < x + 1)
-        }"#).unwrap();
+        }"#, &env).unwrap();
 
         let (min, max): (f32, Vec4) = block.eval_into().unwrap();
 
@@ -545,10 +567,10 @@ mod tests {
 
     #[test]
     fn try_eval() {
-        let (document, structure) = get_test_stuff(0, 1);
+        let (env, document, structure) = get_test_stuff(0, 1);
         println!("Document: {document}\nStructure: {structure}");
 
-        let assembled_structure = AssembledStructure::new(&document, structure).unwrap();
+        let assembled_structure = AssembledStructure::new(&document, structure, &env).unwrap();
 
         println!("Assembled Structure: {}", prettify_string(format!("{assembled_structure}")));
 

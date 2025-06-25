@@ -1,9 +1,12 @@
 use lazy_static::lazy_static;
 use regex::Regex;
+use crate::enviroment::Environment;
 use crate::parser::{Document, parse_document};
 use crate::structure::Structure;
 
-pub fn get_test_stuff(opt1: usize, opt2: usize) -> (Document, Structure) {
+pub fn get_test_stuff(opt1: usize, opt2: usize) -> (Environment, Document, Structure) {
+    let env = Environment::new();
+
     let doc_str = match opt1 {
         0 => r#"
         interface Proj {
@@ -67,7 +70,7 @@ pub fn get_test_stuff(opt1: usize, opt2: usize) -> (Document, Structure) {
         _ => ""
     }.to_string();
 
-    let document = parse_document(&doc_str).unwrap();
+    let document = parse_document(&doc_str, &env).unwrap();
 
     let structure_str = match opt2 {
         0 => r#"
@@ -94,9 +97,9 @@ pub fn get_test_stuff(opt1: usize, opt2: usize) -> (Document, Structure) {
         _ => ""
     };
 
-    let structure = Structure::from_ron_string(structure_str).unwrap();
+    let structure = Structure::from_ron_string(structure_str, &env).unwrap();
 
-    (document, structure)
+    (env, document, structure)
 }
 
 pub fn prettify_string(mut string: String) -> String {
@@ -131,6 +134,7 @@ pub fn prettify_string(mut string: String) -> String {
 
         match slice {
             "{" => {brace_depth += 1; insert_newline = true},
+            "}" if brace_depth == 0 => {insert_newline = true},
             "," => insert_newline = !insert_newline,
             ";" => insert_newline = true,
             "(" => {paren_depth += 1; insert_newline = false},

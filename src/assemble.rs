@@ -7,6 +7,7 @@ use crate::tree_walk::{TreeNodeMut, WalkTreeMut};
 use anyhow::{anyhow, Context, Result as AnyResult};
 use ron::Value;
 use crate::ast_operations::{AlphaConvert, IdentScope};
+use crate::enviroment::Environment;
 use crate::interpreter::{Eval, Scope};
 
 
@@ -140,27 +141,29 @@ impl Structure {
 pub struct AssembledStructure {
     pub(crate) fields: Vec<(String, Expr)>,
     pub evaluated_scope: Scope,
-    pub(crate) methods: Vec<Method>
+    pub(crate) methods: Vec<Method>,
+    pub env: Environment
 }
 
 impl AssembledStructure {
     pub fn empty() -> Self {
         Self {
+            env: Environment::new(),
             fields: Vec::new(),
             evaluated_scope: Scope::new(),
             methods: Vec::new()
         }
     }
 
-    pub fn new_from_ron(document: &Document, ron: impl AsRef<str>) -> AnyResult<Self> {
-        Self::new(document, Structure::from_ron_string(ron.as_ref())?)
+    pub fn new_from_ron(document: &Document, ron: impl AsRef<str>, env: &Environment) -> AnyResult<Self> {
+        Self::new(document, Structure::from_ron_string(ron.as_ref(), env)?, env)
     }
 
-    pub fn new_from_value(document: &Document, ron: Value) -> AnyResult<Self> {
-        Self::new(document, Structure::try_from_ron_value(ron)?)
+    pub fn new_from_value(document: &Document, ron: Value, env: &Environment) -> AnyResult<Self> {
+        Self::new(document, Structure::try_from_ron_value(ron, env)?, env)
     }
 
-    pub fn new(document: &Document, mut structure: Structure) -> AnyResult<Self> {
+    pub fn new(document: &Document, mut structure: Structure, env: &Environment) -> AnyResult<Self> {
         let mut fields = Vec::new();
 
         if let Ok(instance_structure) = structure.get_instance_structure(document) {
@@ -172,6 +175,7 @@ impl AssembledStructure {
         fields.append(&mut structure.assemble_fields()?);
 
         Ok(Self {
+            env: env.clone(),
             fields,
             evaluated_scope: Scope::new(),
             methods
@@ -234,7 +238,7 @@ mod tests {
 
     #[test]
     fn try_assemble_method() {
-        let (document, structure) = test_helpers::get_test_stuff(0, 1);
+        let (env, document, structure) = test_helpers::get_test_stuff(0, 1);
         println!("Document: {document}\nStructure: {structure}");
 
         let assembled_method = structure.assemble_method(
@@ -242,17 +246,17 @@ mod tests {
             MethodKey::new(Some("Proj"), "proj")
         ).unwrap();
 
-        let assembled_structure = AssembledStructure::new(&document, structure).unwrap();
+        let assembled_structure = AssembledStructure::new(&document, structure, &env).unwrap();
 
         println!("Assembled Method: {}\nAssembled Structure: {}", prettify_string(format!("{assembled_method}")), prettify_string(format!("{assembled_structure}")));
     }
 
     #[test]
     fn try_assemble_instance() {
-        let (document, structure) = test_helpers::get_test_stuff(0, 2);
+        let (env, document, structure) = test_helpers::get_test_stuff(0, 2);
         println!("Document: {document}\nStructure: {structure}");
 
-        let mut assembled_structure = AssembledStructure::new(&document, structure).unwrap();
+        let mut assembled_structure = AssembledStructure::new(&document, structure, &env).unwrap();
 
         println!("Assembled not pretty: {assembled_structure}\nAssembled Structure: {}", better_prettify(format!("{assembled_structure}")));
 

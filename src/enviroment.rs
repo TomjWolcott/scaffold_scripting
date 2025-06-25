@@ -4,17 +4,18 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::marker::PhantomData;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use crate::parser::{Function, FunctionSignature, Lit, Type};
+use crate::parser::{Function, Lit, Type};
 use anyhow::{anyhow, Context, Result as AnyResult};
 use glam::Vec4;
+use crate::any_value::{AnyValue, AsDynPartialEq};
 use crate::enviroment::RegisterError::TypeNotRegistered;
 
 #[test]
 fn test() {
-    let mut env = SslEnvironment::new();
+    let mut env = Environment::new();
 
-    env.register_type::<String>("String".to_string());
-    env.register_fn(|a: f32| {2.0}, "hello", None);
+    env.register_type::<String>(SslIdentifier::new("String"));
+    let _ = env.register_fn(|a: f32| {2.0}, SslIdentifier::new("hello"));
 
     println!("{:#?}", env.inner())
 }
@@ -49,25 +50,37 @@ impl SslIdentifier {
     }
 }
 
+impl From<&str> for SslIdentifier {
+    fn from(value: &str) -> Self {
+        SslIdentifier::new(value)
+    }
+}
+
+impl From<String> for SslIdentifier {
+    fn from(value: String) -> Self {
+        SslIdentifier::new(value)
+    }
+}
+
 #[derive(Debug)]
 pub enum RegisterError {
     TypeNotRegistered(usize, String)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 /// Holds all registered data for Ssl: unary ops, binary ops, functions, consts, types, fields
-pub struct SslEnvironment(Arc<RwLock<SslEnvironmentInner>>);
+pub struct Environment(Arc<RwLock<EnvironmentInner>>);
 
-impl SslEnvironment {
+impl Environment {
     pub fn new() -> Self {
-        SslEnvironment(Arc::new(RwLock::new(SslEnvironmentInner::new())))
+        Environment(Arc::new(RwLock::new(EnvironmentInner::new())))
     }
 
-    fn inner(&self) -> RwLockReadGuard<SslEnvironmentInner> {
+    fn inner(&self) -> RwLockReadGuard<EnvironmentInner> {
         self.0.read().unwrap()
     }
 
-    fn inner_mut(&mut self) -> RwLockWriteGuard<SslEnvironmentInner> {
+    fn inner_mut(&mut self) -> RwLockWriteGuard<EnvironmentInner> {
         self.0.write().unwrap()
     }
 
@@ -75,12 +88,17 @@ impl SslEnvironment {
         self.inner_mut().types.push((type_name.name.clone(), TypeId::of::<T>(), type_name.wgsl_name))
     }
 
-    pub fn registered_custom_type<T: Any>(&self) -> Option<Type> {
+    pub fn get_registered_type<T: Any>(&self) -> Option<Type> {
         let type_id = TypeId::of::<T>();
 
         self.inner().types.iter()
-            .find(|(_, other_type_id, _)| *type_id == other_type_id)
+            .find(|(_, other_type_id, _)| type_id == *other_type_id)
             .map(|(name, _, _)| Type::Custom(name.clone()))
+    }
+
+    pub fn type_name_exists(&self, name: &String) -> bool {
+        self.inner().types.iter()
+            .any(|(other_name, _, _)| name == other_name)
     }
 
     pub fn get_wgsl_name(&self, ty: &Type) -> Option<String> {
@@ -91,102 +109,106 @@ impl SslEnvironment {
             Type::Mat4x4 => Some("mat4x4".to_string()),
             Type::Unit => Some("unit".to_string()),
             Type::Custom(type_name) => {
-                let Some((_, ident)) = self.inner().types.iter().find(|(_, ident)| ident.name() == type_name) else {
+                let inner = self.inner();
+                let Some((name, _, wgsl_name)) = inner.types.iter().find(|(name, _, _)| name == type_name) else {
                     return None
                 };
 
-                Some(ident.wgsl_name().clone())
+                Some(wgsl_name.as_ref().unwrap_or(&name).clone())
             }
             _ => None
         }
     }
 
-    pub fn get_type_name(&self, type_id: &TypeId) -> Option<&String> {
-        self.inner().types.get(type_id)
+    pub fn get_type_name(&self, type_id: &TypeId) -> Option<String> {
+        self.inner().types.iter()
+            .find(|(_, other_type_id, _)| other_type_id == type_id)
+            .map(|(name, _, _)| name.clone())
     }
 
-    pub fn register_fn<Params: FunctionParams, Out: SslType, FN: SslCallable<Params, Out> + 'static>(
+    pub fn register_fn<Params: FunctionParams, Out: SslType, FN: IntoSslCallableFn<Params, Out>>(
         &mut self,
         function: FN,
-        name: impl AsRef<str>,
-        wgsl_name: Option<String>
+        name: SslIdentifier
     ) -> Result<(), RegisterError> {
-        let input_types = Params::type_ids().iter().enumerate().map(|(i, type_id)| {
-            self.get_type_name(type_id)
-                .ok_or(TypeNotRegistered(i, type_name::<Params>().to_string()))
-                .map(|s| s.clone())
-        }).collect::<Result<Vec<_>, RegisterError>>()?;
+        let input_types = Params::input_types(self);
 
-        let fn_signature = FunctionSignature::new(name.as_ref().to_string(), input_types);
+        self.inner_mut().functions.insert(
+            (name.name, input_types),
+            (name.wgsl_name, Box::new(function.into_callable_function()))
+        );
 
-        self.inner_mut().functions.insert(fn_signature, SslFunction::RustFn {
-            func: Box::new(SslCallableFnObj::new(function)),
-            name: SslIdentifier::new(name, wgsl_name)
-        });
+        Ok(())
     }
 }
 
 #[derive(Debug)]
-pub struct SslEnvironmentInner {
-    /// Map from registered unary ops defined by (symbol, input) to (wgsl_symbol, fn)
-    unary_ops: HashMap<(String, Type), (Option<String>, Box<dyn SslUnaryOp>)>,
-    /// Map from registered binary ops defined by (symbol, input1, input2) to (wgsl_symbol, fn)
-    binary_ops: HashMap<(String, Type, Type), (Option<String>, Box<dyn SslBinaryOp>)>,
+struct EnvironmentInner {
+    // /// Map from registered unary ops defined by (symbol, input) to (wgsl_symbol, fn)
+    // unary_ops: HashMap<(String, Type), (Option<String>, Box<dyn SslUnaryOp>)>,
+    // /// Map from registered binary ops defined by (symbol, input1, input2) to (wgsl_symbol, fn)
+    // binary_ops: HashMap<(String, Type, Type), (Option<String>, Box<dyn SslBinaryOp>)>,
     /// Map from registered functions defined by (name, inputs) to (wgsl_name, fn)
     functions: HashMap<(String, Vec<Type>), (Option<String>, Box<dyn SslCallableFn>)>,
     /// Map from registered constants to (wgsl_name, value)
     consts: HashMap<String, (Option<String>, Lit)>,
     /// List of registered types, (name, type_id, wgsl_name)
     types: Vec<(String, TypeId, Option<String>)>,
-    /// Map from registered fields to (wgsl_name, wgsl_index_opt, get_field)
-    field: HashMap<String, (Option<String>, Option<usize>)>
+    // /// Map from registered fields to (wgsl_name, wgsl_index_opt, get_field)
+    // field: HashMap<String, (Option<String>, Option<usize>)>
 }
 
-impl SslEnvironmentInner {
+impl EnvironmentInner {
     fn new() -> Self {
-        SslEnvironmentInner {
-            functions: HashMap::new(),
-            consts: HashMap::new(),
-            types: Vec::new(),
+        EnvironmentInner {
+            // unary_ops: Default::default(),
+            // binary_ops: Default::default(),
+            functions: Default::default(),
+            consts: Default::default(),
+            types: vec![],
+            // field: Default::default(),
         }
     }
 }
-
-pub enum SslFunction {
-    RustFn {
-        func: Box<dyn SslCallableFn>,
-        name: Arc<SslIdentifier>
-    },
-    SslFn(Function)
-}
-
-impl Debug for SslFunction {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SslFunction::RustFn { .. } => write!(f, "RustFn {{ .. }}"),
-            SslFunction::SslFn(_) => write!(f, "SslFn(_)"),
-        }
-    }
-}
-
 
 trait FunctionParams: 'static {
-    fn input_types() -> Vec<Type>;
+    /// Assumes all types are registered in the environment
+    fn input_types(env: &Environment) -> Vec<Type>;
 
     fn type_ids() -> Vec<TypeId>;
 }
 
 trait SslCallableFn: 'static {
-    fn signature(&self, name: String) -> FunctionSignature;
+    fn call(&self, inputs: &Vec<Lit>, env: &Environment) -> Lit;
 
-    fn call(&self, inputs: &Vec<Lit>, env: &SslEnvironment) -> Lit;
+    fn output(&self, env: &Environment) -> Type;
+}
 
-    fn output(&self, env: &SslEnvironment) -> Type;
+impl Debug for dyn SslCallableFn {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<Function>")
+    }
+}
+
+trait IntoSslCallableFn<Params, Out>: 'static {
+    type Function: SslCallableFn;
+
+    fn into_callable_function(self) -> Self::Function;
+}
+
+impl<Params: FunctionParams, Out: SslType, F: SslCallable<Params, Out> + 'static> IntoSslCallableFn<Params, Out> for F {
+    type Function = SslCallableFnObj<F, Params, Out>;
+
+    fn into_callable_function(self) -> Self::Function {
+        SslCallableFnObj {
+            f: self,
+            params: Default::default(),
+        }
+    }
 }
 
 struct SslCallableFnObj<F: SslCallable<Params, Out> + 'static, Params: FunctionParams, Out: SslType> {
     f: F,
-    input_types: Vec<Type>,
     params: PhantomData<(Params, Out)>
 }
 
@@ -194,91 +216,81 @@ impl<Params: FunctionParams, Out: SslType, F: SslCallable<Params, Out> + 'static
     fn new(f: F) -> Self {
         Self {
             f,
-            input_types: Params::input_types(),
             params: Default::default(),
         }
     }
 }
 
 impl<Params: FunctionParams, Out: SslType, F: SslCallable<Params, Out> + 'static> SslCallableFn for SslCallableFnObj<F, Params, Out> {
-    fn signature(&self, name: String) -> FunctionSignature {
-        FunctionSignature::new(name, self.input_types.clone())
-    }
-
-    fn call(&self, inputs: &Vec<Lit>, env: &SslEnvironment) -> Lit {
+    fn call(&self, inputs: &Vec<Lit>, env: &Environment) -> Lit {
         SslCallable::call(&self.f, inputs, env)
     }
 
-    fn output(&self, env: &SslEnvironment) -> Type {
+    fn output(&self, env: &Environment) -> Type {
         Out::ssl_type(env)
     }
 }
 
 trait SslUnaryOp: 'static {
-    fn call(&self, input: Lit, env: &SslEnvironment) -> Lit;
+    fn call(&self, input: Lit, env: &Environment) -> Lit;
 
-    fn output(&self, env: &SslEnvironment) -> Type;
+    fn output(&self, env: &Environment) -> Type;
 }
 
 impl<P1: SslType, Out: SslType, F: SslCallable<(P1,), Out> + 'static> SslUnaryOp for SslCallableFnObj<F, (P1,), Out> {
-    fn call(&self, input: Lit, env: &SslEnvironment) -> Lit {
-        self.f(P1::from_lit(input)).lit(env)
+    fn call(&self, input: Lit, env: &Environment) -> Lit {
+        self.f.call(&vec![input], env)
     }
 
-    fn output(&self, env: &SslEnvironment) -> Type {
+    fn output(&self, env: &Environment) -> Type {
         Out::ssl_type(env)
     }
 }
 
 trait SslBinaryOp: 'static {
-    fn call(&self, inputs: (Lit, Lit), env: &SslEnvironment) -> Lit;
+    fn call(&self, inputs: (Lit, Lit), env: &Environment) -> Lit;
 
-    fn output(&self, env: &SslEnvironment) -> Type;
+    fn output(&self, env: &Environment) -> Type;
 }
 
-impl<P1: SslType, P2: SslType, Out: SslType, F: SslCallable<(P1, P2), Out> + 'static> SslUnaryOp for SslCallableFnObj<F, (P1, P2), Out> {
-    fn call(&self, inputs: (Lit, Lit), env: &SslEnvironment) -> Lit {
-        self.f(P1::from_lit(inputs.0), P2::from_lit(inputs.1)).lit(env)
+impl<P1: SslType, P2: SslType, Out: SslType, F: SslCallable<(P1, P2), Out> + 'static> SslBinaryOp for SslCallableFnObj<F, (P1, P2), Out> {
+    fn call(&self, inputs: (Lit, Lit), env: &Environment) -> Lit {
+        self.f.call(&vec![inputs.0, inputs.1], env)
     }
 
-    fn output(&self, env: &SslEnvironment) -> Type {
+    fn output(&self, env: &Environment) -> Type {
         Out::ssl_type(env)
     }
 }
 
 trait SslCallable<Params: FunctionParams, OUT: SslType> {
-    fn signature(&self, name: String) -> FunctionSignature {
-        FunctionSignature::new(name, Params::input_types())
-    }
-
-    fn call(&self, inputs: &Vec<Lit>, env: &SslEnvironment) -> Lit;
+    fn call(&self, inputs: &Vec<Lit>, env: &Environment) -> Lit;
 }
 
-pub trait SslType: 'static + Any + Sized {
-    fn ssl_type(env: &SslEnvironment) -> Type {
-        env.get_type_of::<Self>()
-            .map(|s| Type::Custom(s.clone()))
+pub trait SslType: 'static + Clone + PartialEq + AnyValue + Sized {
+    fn ssl_type(env: &Environment) -> Type {
+        env.get_registered_type::<Self>()
             .unwrap_or_else(|| panic!("Type {} not registered", type_name::<Self>()))
     }
 
-    fn lit(self, env: &SslEnvironment) -> Lit {
-        Lit::Custom(Box::new(self), env.get_type_of::<Self>().unwrap().clone())
+    fn lit(self, env: &Environment) -> Lit {
+        Lit::Custom(Box::new(self), env.get_type_name(&TypeId::of::<Self>()).unwrap().clone())
     }
 
     fn from_lit(lit: Lit) -> Self {
         match lit {
-            Lit::Custom(boxed, _) => boxed.downcast::<Self>().expect("Failed to downcast Lit::Custom"),
+            Lit::Custom(boxed, _) => boxed.as_any().downcast_ref::<Self>().expect("Failed to downcast Lit::Custom").clone(),
             _ => panic!("Expected Lit::Custom, got {:?}", lit)
         }
     }
 }
 
 impl SslType for bool {
-    fn ssl_type(_env: &SslEnvironment) -> Type {
+    fn ssl_type(_env: &Environment) -> Type {
         Type::Bool
     }
 
-    fn lit(self, _env: &SslEnvironment) -> Lit {
+    fn lit(self, _env: &Environment) -> Lit {
         Lit::Bool(self)
     }
 
@@ -288,11 +300,11 @@ impl SslType for bool {
 }
 
 impl SslType for f32 {
-    fn ssl_type(_env: &SslEnvironment) -> Type {
+    fn ssl_type(_env: &Environment) -> Type {
         Type::F32
     }
 
-    fn lit(self, _env: &SslEnvironment) -> Lit {
+    fn lit(self, _env: &Environment) -> Lit {
         Lit::F32(self)
     }
 
@@ -304,8 +316,8 @@ impl SslType for f32 {
 macro_rules! define_impls {
     ($n:literal | $($param:ident),*) => {
         impl<$($param : SslType),*> FunctionParams for ($($param,)*) {
-            fn input_types() -> Vec<Type> {
-                vec![$($param::ssl_type()),*]
+            fn input_types(env: &Environment) -> Vec<Type> {
+                vec![$($param::ssl_type(env)),*]
             }
 
             fn type_ids() -> Vec<TypeId> {
@@ -314,7 +326,7 @@ macro_rules! define_impls {
         }
 
         impl<$($param : SslType,)* OUT: SslType, FN: Fn($($param),*) -> OUT> SslCallable<($($param ,)*), OUT> for FN {
-            fn call(&self, inputs: &Vec<Lit>, env: &SslEnvironment) -> Lit {
+            fn call(&self, inputs: &Vec<Lit>, env: &Environment) -> Lit {
                 debug_assert_eq!(inputs.len(), $n);
                 let mut iter = inputs.iter();
 
@@ -323,22 +335,23 @@ macro_rules! define_impls {
         }
 
         impl<$($param : SslType),*> SslType for ($($param,)*) {
-            fn ssl_type(_env: &SslEnvironment) -> Type {
-                Type::Tuple(vec![$($param ::ssl_type()),*])
+            fn ssl_type(env: &Environment) -> Type {
+                Type::Tuple(vec![$($param ::ssl_type(env)),*])
             }
 
-            fn lit(self, _env: &SslEnvironment) -> Lit {
+            fn lit(self, env: &Environment) -> Lit {
+                #[allow(non_snake_case)]
                 let ($($param,)*) = self;
 
-                Lit::Tuple(vec![$($param),*])
+                Lit::Tuple(vec![$($param.lit(env)),*])
             }
 
             fn from_lit(lit: Lit) -> Self {
                 match lit {
                     Lit::Tuple(v) => {
-                        let [$($param),*] = v[0..$n] else { panic!(); };
+                        let mut iter = v.into_iter();
 
-                        ($($param,)*)
+                        ($($param ::from_lit(iter.next().unwrap()),)*)
                     },
                     _ => panic!()
                 }
@@ -360,6 +373,3 @@ define_impls!(9 | P1, P2, P3, P4, P5, P6, P7, P8, P9);
 define_impls!(10 | P1, P2, P3, P4, P5, P6, P7, P8, P9, P10);
 define_impls!(11 | P1, P2, P3, P4, P5, P6, P7, P8, P9, P10, P11);
 define_impls!(12 | P1, P2, P3, P4, P5, P6, P7, P8, P9, P10, P11, P12);
-define_impls!(13 | P1, P2, P3, P4, P5, P6, P7, P8, P9, P10, P11, P12, P13);
-define_impls!(14 | P1, P2, P3, P4, P5, P6, P7, P8, P9, P10, P11, P12, P13, P14);
-define_impls!(15 | P1, P2, P3, P4, P5, P6, P7, P8, P9, P10, P11, P12, P13, P14, P15);

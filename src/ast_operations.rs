@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
+use crate::enviroment::Environment;
 use crate::parser::*;
 use crate::test_helpers::prettify_string;
 use crate::tree_walk::{Options, RecOrdering, TreeNodeMut, WalkTreeMut};
@@ -61,6 +62,19 @@ impl AlphaConvert for Stmt {
 
                 if let Some(new_var) = scope.get(&var) {
                     *var = new_var.clone();
+                }
+            }
+            Stmt::IfElse((if_expr, if_block), else_ifs, else_block) => {
+                if_expr.alpha_convert(&mut scope.clone());
+                if_block.alpha_convert(&mut scope.clone());
+
+                for (expr, block) in else_ifs.iter_mut() {
+                    expr.alpha_convert(&mut scope.clone());
+                    block.alpha_convert(&mut scope.clone());
+                }
+
+                if let Some(block) = else_block {
+                    block.alpha_convert(&mut scope.clone());
                 }
             }
             Stmt::Expr(expr) => {
@@ -134,23 +148,46 @@ impl Block {
         while i < self.0.len() {
             let mut do_increment = true;
 
-            match &mut self.0[i] {
+            let exprs = match &mut self.0[i] {
                 Stmt::Declare(_, expr) |
                 Stmt::Assign(_, expr) |
                 Stmt::Expr(expr) => {
-                    let blocks = expr.promote_blocks();
-                    do_increment = blocks.len() == 0;
-
-                    for (Block(stmts, expr_opt), new_var) in blocks {
-                        if let Some(expr) = expr_opt {
-                            self.0.insert(i, Stmt::Declare(Binding(new_var, Type::Auto), expr))
-                        }
-
-                        self.0.splice(i..i, stmts);
-                    }
+                    vec![expr]
                 }
-                Stmt::Noop => {}
+                Stmt::IfElse((if_expr, if_block), else_ifs, else_block) => {
+                    if_block.inline_blocks();
+
+                    let mut exprs = else_ifs.iter_mut().map(|(expr, block)| {
+                        block.inline_blocks();
+
+                        expr
+                    }).collect::<Vec<_>>();
+
+                    exprs.insert(0, if_expr);
+
+                    else_block.as_mut().map(|block| block.inline_blocks());
+
+                    exprs
+                }
+                Stmt::Noop => Vec::new()
+            };
+
+            let mut promoted_stmts = Vec::new();
+
+            for expr in exprs.into_iter().rev() {
+                let blocks = expr.promote_blocks();
+                do_increment = blocks.len() == 0;
+
+                for (Block(mut stmts, expr_opt), new_var) in blocks.into_iter().rev() {
+                    if let Some(expr) = expr_opt {
+                        stmts.push(Stmt::Declare(Binding(new_var, Type::Auto), expr));
+                    }
+
+                    promoted_stmts.append(&mut stmts);
+                }
             }
+
+            self.0.splice(i..i, promoted_stmts);
 
             if do_increment { i += 1 };
         }
@@ -273,6 +310,8 @@ impl Block {
 
 #[test]
 fn try_out_ops() {
+    let env = Environment::new();
+
     let mut block = parse_block(r#"{
         let x: f32 = 4;
         let y: Vec4 = 2 * {
@@ -283,7 +322,7 @@ fn try_out_ops() {
         };
         let x: Vec4 = x * y;
         (x + y, 5)
-    }"#).unwrap();
+    }"#, &env).unwrap();
 
     let before = prettify_string(format!("{}", block.clone()));
 

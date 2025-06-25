@@ -5,6 +5,7 @@ use std::fmt;
 use lazy_static::lazy_static;
 use ron::Map;
 use regex::Regex;
+use crate::enviroment::Environment;
 use crate::parser::{Expr, Lit, parse_expr, ParseError};
 use crate::utils::GetOnMap;
 
@@ -29,7 +30,7 @@ impl Display for FromRonError {
 impl std::error::Error for FromRonError {}
 
 pub trait TryFromRonValue where Self: Sized {
-    fn try_from_ron_value(value: Value) -> ron::Result<Self, FromRonError>;
+    fn try_from_ron_value(value: Value, env: &Environment) -> ron::Result<Self, FromRonError>;
 }
 
 #[derive(Debug, Clone)]
@@ -45,14 +46,14 @@ impl Structure {
             .map(|(_, field)| field)
     }
 
-    pub fn from_ron_string(string: &str) -> ron::Result<Self, FromRonError> {
+    pub fn from_ron_string(string: &str, env: &Environment) -> ron::Result<Self, FromRonError> {
         let value: Value = from_str(ron_preprocess(string.to_string()).as_str()).unwrap();
-        Self::try_from_ron_value(value)
+        Self::try_from_ron_value(value, env)
     }
 }
 
 impl TryFromRonValue for Structure {
-    fn try_from_ron_value(value: Value) -> ron::Result<Self, FromRonError> {
+    fn try_from_ron_value(value: Value, env: &Environment) -> ron::Result<Self, FromRonError> {
         let Value::Map(mut map) = value else { return Err(FromRonError::NotMap(value)) };
         let Some(Value::String(name)) = map.remove(
             &Value::String("__struct_name".to_string())
@@ -65,7 +66,7 @@ impl TryFromRonValue for Structure {
                 return Err(FromRonError::FieldNameNotString(key))
             };
 
-            fields.push((field_name, Field::try_from_ron_value(val)?));
+            fields.push((field_name, Field::try_from_ron_value(val, env)?));
         }
 
         Ok(Self { name, fields })
@@ -91,14 +92,14 @@ pub enum Field {
 }
 
 impl TryFromRonValue for Field {
-    fn try_from_ron_value(value: Value) -> ron::Result<Self, FromRonError> {
+    fn try_from_ron_value(value: Value, env: &Environment) -> ron::Result<Self, FromRonError> {
         match value {
             Value::Number(num) => Ok(Self::Expr(Expr::Lit(Lit::F32(num.into_f64() as f32)))),
             Value::Bool(b) => Ok(Self::Expr(Expr::Lit(Lit::Bool(b)))),
             Value::Seq(v) => {
-                if let Ok(mat4) = Mat4::try_from_ron_value(Value::Seq(v.clone())) {
+                if let Ok(mat4) = Mat4::try_from_ron_value(Value::Seq(v.clone()), env) {
                     Ok(Self::Expr(Expr::Lit(Lit::Mat4x4(mat4))))
-                } else if let Ok(vec4) = Vec4::try_from_ron_value(Value::Seq(v.clone())) {
+                } else if let Ok(vec4) = Vec4::try_from_ron_value(Value::Seq(v.clone()), env) {
                     Ok(Self::Expr(Expr::Lit(Lit::Vec4(vec4))))
                 } else {
                     Err(FromRonError::BadSeq(v))
@@ -106,10 +107,10 @@ impl TryFromRonValue for Field {
             },
             Value::Map(m) => {
                 if Some(&Value::String("Expr".to_string())) != m.get("__struct_name") {
-                    Ok(Self::Structure(Box::new(Structure::try_from_ron_value(Value::Map(m))?)))
+                    Ok(Self::Structure(Box::new(Structure::try_from_ron_value(Value::Map(m), env)?)))
 
                 } else if let Some(Value::String(expr)) = m.get("expr") {
-                    Ok(Self::Expr(parse_expr(expr).map_err(|err| FromRonError::ParseExprErr(err))?))
+                    Ok(Self::Expr(parse_expr(expr, env).map_err(|err| FromRonError::ParseExprErr(err))?))
 
                 } else {
                     Err(FromRonError::DynamicIsMissingFields(m))
@@ -131,7 +132,7 @@ impl Display for Field {
 }
 
 impl TryFromRonValue for Vec4 {
-    fn try_from_ron_value(value: Value) -> ron::Result<Self, FromRonError> {
+    fn try_from_ron_value(value: Value, env: &Environment) -> ron::Result<Self, FromRonError> {
         let Value::Seq(seq) = value else { return Err(FromRonError::NotSeq(value)) };
 
         let [
@@ -152,7 +153,7 @@ impl TryFromRonValue for Vec4 {
 }
 
 impl TryFromRonValue for Mat4 {
-    fn try_from_ron_value(value: Value) -> ron::Result<Self, FromRonError> {
+    fn try_from_ron_value(value: Value, env: &Environment) -> ron::Result<Self, FromRonError> {
         let Value::Seq(seq) = value else { return Err(FromRonError::NotSeq(value)) };
 
         if let [
@@ -162,10 +163,10 @@ impl TryFromRonValue for Mat4 {
             Value::Seq(w)
         ] = seq.as_slice() {
             Ok(Mat4::from_cols(
-                Vec4::try_from_ron_value(Value::Seq(x.to_vec()))?,
-                Vec4::try_from_ron_value(Value::Seq(y.to_vec()))?,
-                Vec4::try_from_ron_value(Value::Seq(z.to_vec()))?,
-                Vec4::try_from_ron_value(Value::Seq(w.to_vec()))?
+                Vec4::try_from_ron_value(Value::Seq(x.to_vec()), env)?,
+                Vec4::try_from_ron_value(Value::Seq(y.to_vec()), env)?,
+                Vec4::try_from_ron_value(Value::Seq(z.to_vec()), env)?,
+                Vec4::try_from_ron_value(Value::Seq(w.to_vec()), env)?
             ))
         } else if let [
             Value::Number(m00),
@@ -216,15 +217,17 @@ pub fn ron_preprocess(string: String) -> String {
 #[cfg(test)]
 mod tests {
     use ron::{from_str, Value};
+    use crate::enviroment::Environment;
     use crate::structure::{ron_preprocess, Structure, TryFromRonValue};
 
     #[test]
     fn test_ronny() {
         let ron = std::fs::read_to_string("assets/definitions.ron").unwrap();
+        let env = Environment::new();
 
         let val: Value = from_str(ron_preprocess(ron).as_str()).unwrap();
 
-        let structure = Structure::try_from_ron_value(val).unwrap();
+        let structure = Structure::try_from_ron_value(val, &env).unwrap();
 
         println!("Structure:\n{}", structure);
     }
