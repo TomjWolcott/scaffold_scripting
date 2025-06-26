@@ -34,7 +34,7 @@ function = { "fn" ~ w ~ ident ~ "(" ~
 block_wrapper = { block }
 block = { "{" ~ w ~ (stmt ~ w)* ~ (expr ~ w)? ~ "}" }
 stmt  = { (decl | asgn | ifelse | (expr ~ ";")) } // TODO: Add pattern matching for destructuring declares
-    decl = { "let" ~ w ~ binding ~ w ~ "=" ~ w ~ expr ~ w ~ ";" }
+    decl = { "let" ~ w ~ (binding | ident) ~ w ~ "=" ~ w ~ expr ~ w ~ ";" }
     asgn = { ident ~ w ~ "=" ~ w ~ expr ~ ";" }
     ifelse = { "if" ~ w ~ "(" ~ w ~ expr ~ w ~ ")" ~ w ~ block ~ (w ~ "else if" ~ w ~ "(" ~ w ~ expr ~ w ~ ")" ~ w ~ block)* ~ (w ~ "else" ~ w ~ block)? }
 

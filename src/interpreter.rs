@@ -1,8 +1,12 @@
-use std::fmt::Display;
+use std::collections::HashMap;
+use std::fmt::{Debug, Display};
 use glam::{Mat4, Vec4};
 use crate::assemble::AssembledStructure;
-use crate::parser::{Binding, Block, Expr, Lit, Stmt};
+use crate::parser::{Binding, Block, Expr, Lit, Stmt, Type};
 use anyhow::{anyhow, Context, Result as AnyResult};
+use once_cell::sync::Lazy;
+use crate::enviroment::{Environment, SslType};
+use crate::scope::Scope;
 
 pub trait IntoArgs {
     fn into_args(self) -> Vec<Lit>;
@@ -161,80 +165,6 @@ impl From<()> for Lit {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Scope {
-    vars: Vec<(String, Lit)>
-}
-
-impl Scope {
-    pub fn new() -> Self {
-
-        Self {
-            vars: Vec::new()
-        }
-    }
-
-    pub fn from_vars(vars: impl IntoIterator<Item = (String, Lit)>) -> Self {
-        Self { vars: vars.into_iter().collect() }
-    }
-
-    pub fn get(&self, name: impl AsRef<str>) -> Option<&Lit> {
-        self.vars.iter().find(|(n, _)| n.as_str() == name.as_ref()).map(|(_, field)| field)
-    }
-
-    pub fn get_mut(&mut self, name: impl AsRef<str>) -> Option<&mut Lit> {
-        self.vars.iter_mut().find(|(n, _)| n.as_str() == name.as_ref()).map(|(_, field)| field)
-    }
-
-    pub fn push(&mut self, name: String, field: Lit) {
-        self.vars.push((name, field));
-    }
-
-    pub fn size(&self) -> usize {
-       self.vars.len()
-    }
-
-    pub fn resize(&mut self, size: usize) {
-        self.vars.splice(size.., []);
-    }
-}
-
-impl Display for Scope {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{{ ")?;
-
-        for (name, field) in self.vars.iter() {
-            write!(f, "{}: {}, ", name, field)?;
-        }
-
-        write!(f, " }}")
-    }
-}
-
-impl Scope {
-    pub fn iter(&self) -> ScopeIterator {
-        ScopeIterator {
-            scope: self,
-            index: 0
-        }
-    }
-}
-
-pub struct ScopeIterator<'a> {
-    scope: &'a Scope,
-    index: usize
-}
-
-impl<'a> Iterator for ScopeIterator<'a> {
-    type Item = (&'a String, &'a Lit);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let result = self.scope.vars.get(self.index).map(|(name, field)| (name, field));
-        self.index += 1;
-        result
-    }
-}
-
 impl AssembledStructure {
     pub fn eval_method<OUT: TryFrom<Lit, Error=anyhow::Error>>(&self, method_name: impl AsRef<str>, args: impl IntoArgs) -> AnyResult<OUT> {
         /* TODO: It's bad to search for the method every single time, I need to find
@@ -248,28 +178,30 @@ impl AssembledStructure {
             scope.push(name.clone(), field);
         }
 
-        Ok(method.body.eval(&mut scope)?.try_into()?)
+        Ok(method.body.eval(&mut scope, &self.env)?.try_into()?)
     }
 }
 
 pub trait Eval {
-    fn eval_into<OUT: TryFrom<Lit, Error=anyhow::Error>>(&self) -> AnyResult<OUT> {
-        self.eval(&mut Scope::new())?.try_into()
+    fn eval_into<OUT: TryFrom<Lit, Error=anyhow::Error>>(&self, env: &Environment) -> AnyResult<OUT> {
+        self.eval(&mut Scope::new(), env)?.try_into()
     }
 
-    fn eval(&self, scope: &mut Scope) -> AnyResult<Lit>;
+    fn eval(&self, scope: &mut Scope<Lit>, env: &Environment) -> AnyResult<Lit>;
+
+    fn eval_type(&self, env: &Environment) -> AnyResult<Type>;
 }
 
 impl Eval for Block {
-    fn eval(&self, scope: &mut Scope) -> AnyResult<Lit> {
+    fn eval(&self, scope: &mut Scope<Lit>, env: &Environment) -> AnyResult<Lit> {
         let scope_size = scope.size();
 
         for stmt in self.0.iter() {
-            stmt.eval(scope)?;
+            stmt.eval(scope, env)?;
         }
 
         let return_value = if let Some(expr) = &self.1 {
-            Ok(expr.eval(scope)?)
+            Ok(expr.eval(scope, env)?)
         } else {
             Ok(Lit::Unit)
         };
@@ -278,17 +210,25 @@ impl Eval for Block {
 
         return_value
     }
+
+    fn eval_type(&self, env: &Environment) -> AnyResult<Type> {
+        if let Some(expr) = &self.1 {
+            Ok(expr.eval_type(env)?)
+        } else {
+            Ok(Type::Unit)
+        }
+    }
 }
 
 impl Eval for Stmt {
-    fn eval(&self, scope: &mut Scope) -> AnyResult<Lit> {
+    fn eval(&self, scope: &mut Scope<Lit>, env: &Environment) -> AnyResult<Lit> {
         match self {
             Stmt::Declare(Binding(var, _), expr) => {
-                let eval = expr.eval(scope)?;
+                let eval = expr.eval(scope, env)?;
                 scope.push(var.clone(), eval);
             }
             Stmt::Assign(var, expr) => {
-                let eval_field = expr.eval(scope)?;
+                let eval_field = expr.eval(scope, env)?;
                 let field = scope.get_mut(var).with_context(|| format!("var {var} not found in scope"))?;
 
                 if field.matches_type(&eval_field) {
@@ -304,9 +244,9 @@ impl Eval for Stmt {
                 let iter = [(if_expr, if_block)].into_iter().chain(else_ifs.iter().map(|(a, b)| (a, b)));
 
                 for (expr, block) in iter {
-                    match expr.eval(scope)? {
+                    match expr.eval(scope, env)? {
                         Lit::Bool(true) => {
-                            block.eval(scope)?;
+                            block.eval(scope, env)?;
 
                             return Ok(Lit::Unit);
                         }
@@ -316,189 +256,88 @@ impl Eval for Stmt {
                 }
 
                 if let Some(block) = else_block {
-                    block.eval(scope)?;
+                    block.eval(scope, env)?;
                 }
             }
             Stmt::Expr(expr) => {
-                expr.eval(scope)?;
+                expr.eval(scope, env)?;
             }
             Stmt::Noop => {}
         }
 
         Ok(Lit::Unit)
     }
+
+    fn eval_type(&self, _env: &Environment) -> AnyResult<Type> {
+        Ok(Type::Unit)
+    }
 }
 
 impl Eval for Expr {
-    fn eval(&self, scope: &mut Scope) -> AnyResult<Lit> {
+    fn eval(&self, scope: &mut Scope<Lit>, env: &Environment) -> AnyResult<Lit> {
         match self {
             Expr::BinExpr(left, symbol, right) => {
-                match (left.eval(scope)?, symbol.as_str(), right.eval(scope)?) {
-                    (Lit::F32(n1), "+", Lit::F32(n2)) => Ok(Lit::F32(n1 + n2)),
-                    (Lit::F32(n1), "-", Lit::F32(n2)) => Ok(Lit::F32(n1 - n2)),
-                    (Lit::F32(n1), "*", Lit::F32(n2)) => Ok(Lit::F32(n1 * n2)),
-                    (Lit::F32(n1), "/", Lit::F32(n2)) => Ok(Lit::F32(n1 / n2)),
-                    (Lit::Vec4(v1), "*", Lit::Vec4(v2)) => Ok(Lit::Vec4(v1 * v2)),
-                    (Lit::Vec4(v1), "/", Lit::Vec4(v2)) => Ok(Lit::Vec4(v1 / v2)),
+                let (left, sym, right) = (left.eval(scope, env)?, symbol.as_str(), right.eval(scope, env)?);
 
-                    (Lit::Vec4(v1), "+", Lit::Vec4(v2)) => Ok(Lit::Vec4(v1 + v2)),
-                    (Lit::Vec4(v1), "-", Lit::Vec4(v2)) => Ok(Lit::Vec4(v1 - v2)),
-
-                    (Lit::F32(n), "*", Lit::Vec4(v)) => Ok(Lit::Vec4(n * v)),
-                    (Lit::Vec4(v), "*", Lit::F32(n)) => Ok(Lit::Vec4(v * n)),
-                    (Lit::Vec4(v), "/", Lit::F32(n)) => Ok(Lit::Vec4(v / n)),
-
-                    (Lit::Mat4x4(m), "*", Lit::Mat4x4(m2)) => Ok(Lit::Mat4x4(m * m2)),
-                    (Lit::Mat4x4(m), "*", Lit::F32(n)) => Ok(Lit::Mat4x4(m * n)),
-                    (Lit::F32(n), "*", Lit::Mat4x4(m)) => Ok(Lit::Mat4x4(n * m)),
-                    (Lit::Mat4x4(m), "*", Lit::Vec4(v)) => Ok(Lit::Vec4(m * v)),
-                    (Lit::F32(n), "%", Lit::F32(n2)) => Ok(Lit::F32(n % n2)),
-                    (Lit::Vec4(v), "%", Lit::Vec4(v2)) => Ok(Lit::Vec4(v % v2)),
-
-                    // boolean ops
-                    (Lit::Bool(b1), "&&", Lit::Bool(b2)) => Ok(Lit::Bool(b1 && b2)),
-                    (Lit::Bool(b1), "||", Lit::Bool(b2)) => Ok(Lit::Bool(b1 || b2)),
-                    (x1, "==", x2) => Ok(Lit::Bool(x1 == x2)),
-                    (x1, "!=", x2) => Ok(Lit::Bool(x1 != x2)),
-                    (Lit::F32(n1), "<", Lit::F32(n2)) => Ok(Lit::Bool(n1 < n2)),
-                    (Lit::F32(n1), ">", Lit::F32(n2)) => Ok(Lit::Bool(n1 > n2)),
-                    (Lit::F32(n1), "<=", Lit::F32(n2)) => Ok(Lit::Bool(n1 <= n2)),
-                    (Lit::F32(n1), ">=", Lit::F32(n2)) => Ok(Lit::Bool(n1 >= n2)),
-
-                    (f1, symbol, f2) => Err(anyhow!(
-                        "Could not find binary operation with signature {} {} {}",
-                        f1.get_type(), symbol, f2.get_type()
-                    ))
+                if sym == "==" {
+                    return Ok(Lit::Bool(left == right));
+                } else if sym == "!=" {
+                    return Ok(Lit::Bool(left != right));
                 }
+
+                let (_, op) = &*env.get_binary_op(sym, left.get_type(), right.get_type())
+                    .ok_or(anyhow!(
+                        "Could not find binary operation with signature {} {} {}",
+                        left.get_type(), symbol, right.get_type()
+                    ))?;
+
+                Ok(op.call((left, right), env))
             }
             Expr::UnaryExpr(symbol, right) => {
-                match (symbol.as_str(), right.eval(scope)?) {
-                    ("-", Lit::F32(n)) => Ok(Lit::F32(-n)),
-                    ("-", Lit::Vec4(v)) => Ok(Lit::Vec4(-v)),
-                    ("-", Lit::Mat4x4(m)) => Ok(Lit::Mat4x4(-m)),
-                    ("+", Lit::F32(n)) => Ok(Lit::F32(n)),
-                    ("+", Lit::Vec4(v)) => Ok(Lit::Vec4(v)),
-                    ("+", Lit::Mat4x4(m)) => Ok(Lit::Mat4x4(m)),
-                    ("!", Lit::Bool(b)) => Ok(Lit::Bool(!b)),
+                let (sym, right) = (symbol.as_str(), right.eval(scope, env)?);
 
-                    (symbol, right) => Err(anyhow!(
+                let (_, op) = &*env.get_unary_op(sym, right.get_type())
+                    .ok_or(anyhow!(
                         "Could not find unary operation with signature {} {}",
                         symbol, right.get_type()
-                    ))
-                }
+                    ))?;
+
+                Ok(op.call(right, env))
             }
             Expr::Application(fn_name, args) => {
                 let (input_types, inputs) = args.iter()
-                    .map(|arg| arg.eval(scope).map(|input| (input.get_type(), input)))
+                    .map(|arg| arg.eval(scope, env).map(|input| (input.get_type(), input)))
                     .collect::<AnyResult<(Vec<_>, Vec<_>)>>()?;
 
-                match (fn_name.as_str(), &inputs[..]) {
-                    //constructors
-                    ("vec4", &[
-                        Lit::F32(x), Lit::F32(y), Lit::F32(z), Lit::F32(w)
-                    ]) => Ok(Lit::Vec4(Vec4::new(x, y, z, w))),
-                    ("mat4x4", &[
-                        Lit::F32(a), Lit::F32(b), Lit::F32(c), Lit::F32(d),
-                        Lit::F32(e), Lit::F32(f), Lit::F32(g), Lit::F32(h),
-                        Lit::F32(i), Lit::F32(j), Lit::F32(k), Lit::F32(l),
-                        Lit::F32(m), Lit::F32(n), Lit::F32(o), Lit::F32(p)
-                    ]) => Ok(Lit::Mat4x4(Mat4::from_cols_array_2d(&[
-                        [a, b, c, d],
-                        [e, f, g, h],
-                        [i, j, k, l],
-                        [m, n, o, p],
-                    ]))),
-                    ("mat4x4", &[
-                        Lit::Vec4(v1), Lit::Vec4(v2), Lit::Vec4(v3), Lit::Vec4(v4)
-                    ]) => Ok(Lit::Mat4x4(Mat4::from_cols(v1, v2, v3, v4))),
+                if let ("select", [x_false, x_true, Lit::Bool(condition)]) = (fn_name.as_str(), &inputs[..]) {
+                    return if !x_false.matches_type(x_true) {
+                        Err(anyhow!("Types do not match in select for {} and {}", x_false.get_type(), x_true.get_type()))
+                    } else if *condition {
+                        Ok(x_true.clone())
+                    } else {
+                        Ok(x_false.clone())
+                    };
+                }
 
-                    ("normalize", &[Lit::Vec4(vector)]) => Ok(Lit::Vec4(vector.normalize())),
-                    ("dot", [
-                        Lit::Vec4(vector),
-                        Lit::Vec4(vector2),
-                    ]) => Ok(Lit::F32(vector.dot(vector2.clone()))),
-                    ("length", &[Lit::Vec4(vector)]) => Ok(Lit::F32(vector.length())),
-                    ("length_squared",& [Lit::Vec4(vector)]) => Ok(Lit::F32(vector.length_squared())),
-                    // distance fn
-                    ("distance", &[Lit::Vec4(v1), Lit::Vec4(v2)]) => Ok(Lit::F32(v1.distance(v2))),
-
-                    ("mix", &[Lit::F32(f1), Lit::F32(f2), Lit::F32(t)]) => Ok(Lit::F32(f1 * (1.0 - t) + f2 * t)),
-                    ("mix", &[Lit::Vec4(v1), Lit::Vec4(v2), Lit::F32(t)]) => Ok(Lit::Vec4(v1 * (1.0 - t) + v2 * t)),
-                    ("mix", &[Lit::Mat4x4(m1), Lit::Mat4x4(m2), Lit::F32(t)]) => Ok(Lit::Mat4x4(m1 * (1.0 - t) + m2 * t)),
-
-                    ("step", &[Lit::F32(edge), Lit::F32(x)]) => Ok(Lit::F32(if x < edge { 0.0 } else { 1.0 })),
-                    ("step", &[Lit::Vec4(edge), Lit::Vec4(x)]) => Ok(Lit::Vec4(Vec4::new(
-                        if x.x < edge.x { 0.0 } else { 1.0 },
-                        if x.y < edge.y { 0.0 } else { 1.0 },
-                        if x.z < edge.z { 0.0 } else { 1.0 },
-                        if x.w < edge.w { 0.0 } else { 1.0 },
-                    ))),
-
-                    ("smoothstep", &[Lit::F32(edge0), Lit::F32(edge1), Lit::F32(x)]) => {
-                        let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
-                        Ok(Lit::F32(t * t * (3.0 - 2.0 * t)))
-                    },
-                    ("smoothstep", &[Lit::Vec4(edge0), Lit::Vec4(edge1), Lit::Vec4(x)]) => {
-                        let t = ((x - edge0) / (edge1 - edge0)).clamp(Vec4::ZERO, Vec4::ONE);
-                        Ok(Lit::Vec4(t * t * (Vec4::ONE * 3.0 - Vec4::ONE * 2.0 * t)))
-                    },
-                    ("max", &[Lit::F32(f1), Lit::F32(f2)]) => Ok(Lit::F32(f1.max(f2))),
-                    ("min", &[Lit::F32(f1), Lit::F32(f2)]) => Ok(Lit::F32(f1.min(f2))),
-                    ("max", &[Lit::Vec4(v1), Lit::Vec4(v2)]) => Ok(Lit::Vec4(v1.max(v2))),
-                    ("min", &[Lit::Vec4(v1), Lit::Vec4(v2)]) => Ok(Lit::Vec4(v1.min(v2))),
-                    ("clamp", &[Lit::F32(f), Lit::F32(min), Lit::F32(max)]) => Ok(Lit::F32(f.clamp(min, max))),
-                    ("clamp", &[Lit::Vec4(v), Lit::Vec4(min), Lit::Vec4(max)]) => Ok(Lit::Vec4(v.clamp(min, max))),
-                    ("cos", &[Lit::F32(f)]) => Ok(Lit::F32(f.cos())),
-                    ("sin", &[Lit::F32(f)]) => Ok(Lit::F32(f.sin())),
-                    ("tan", &[Lit::F32(f)]) => Ok(Lit::F32(f.tan())),
-                    ("acos", &[Lit::F32(f)]) => Ok(Lit::F32(f.acos())),
-                    ("asin", &[Lit::F32(f)]) => Ok(Lit::F32(f.asin())),
-                    ("atan", &[Lit::F32(f)]) => Ok(Lit::F32(f.atan())),
-                    ("atan2", &[Lit::F32(f1), Lit::F32(f2)]) => Ok(Lit::F32(f1.atan2(f2))),
-                    ("pow", &[Lit::F32(f1), Lit::F32(f2)]) => Ok(Lit::F32(f1.powf(f2))),
-                    ("sqrt", &[Lit::F32(f)]) => Ok(Lit::F32(f.sqrt())),
-                    ("exp", &[Lit::F32(f)]) => Ok(Lit::F32(f.exp())),
-                    // ("ln", [Lit::F32(f)]) => Ok(Lit::F32(f.ln())),
-                    ("log2", &[Lit::F32(f)]) => Ok(Lit::F32(f.log2())),
-                    // ("log10", [Lit::F32(f)]) => Ok(Lit::F32(f.log10())),
-                    ("abs", &[Lit::F32(f)]) => Ok(Lit::F32(f.abs())),
-                    ("abs", &[Lit::Vec4(v)]) => Ok(Lit::Vec4(v.abs())),
-                    ("floor", &[Lit::F32(f)]) => Ok(Lit::F32(f.floor())),
-                    //ceil
-                    ("ceil", &[Lit::F32(f)]) => Ok(Lit::F32(f.ceil())),
-                    ("round", &[Lit::F32(f)]) => Ok(Lit::F32(f.round())),
-                    ("fract", &[Lit::F32(f)]) => Ok(Lit::F32(f.fract())),
-                    ("fract", &[Lit::Vec4(v)]) => Ok(Lit::Vec4(v.fract())),
-                    ("trunc", &[Lit::F32(f)]) => Ok(Lit::F32(f.trunc())),
-                    ("trunc", &[Lit::Vec4(v)]) => Ok(Lit::Vec4(v.trunc())),
-                    ("sign", &[Lit::F32(f)]) => Ok(Lit::F32(f.signum())),
-                    ("sign", &[Lit::Vec4(v)]) => Ok(Lit::Vec4(v.signum())),
-
-                    ("select", [x_false, x_true, Lit::Bool(condition)]) => {
-                        if !x_false.matches_type(x_true) {
-                            Err(anyhow!("Types do not match in select for {} and {}", x_false.get_type(), x_true.get_type()))
-                        } else if *condition {
-                            Ok(x_true.clone())
-                        } else {
-                            Ok(x_false.clone())
-                        }
-                    }
-
-                    (fn_name, inputs) => Err(anyhow!(
+                let (_, function) = &*env.get_fn(fn_name, input_types.clone())
+                    .ok_or(anyhow!(
                         "Could not find signature {fn_name}({})",
                         inputs.iter().map(|input| format!("{}", input.get_type())).collect::<Vec<_>>().join(", ")
-                    ))
-                }
+                    ))?;
+
+                Ok(function.call(&inputs, env))
             },
             Expr::Dot(_, _, _) => Err(anyhow!("EVAL NOT SUPPORTED FOR DOT")),
-            Expr::Field(expr, field_name) => match (expr.eval(scope)?, field_name.as_str()) {
-                (Lit::Vec4(v), "x") => Ok(Lit::F32(v.x)),
-                (Lit::Vec4(v), "y") => Ok(Lit::F32(v.y)),
-                (Lit::Vec4(v), "z") => Ok(Lit::F32(v.z)),
-                (Lit::Vec4(v), "w") => Ok(Lit::F32(v.w)),
-                (lit, field_name) => Err(anyhow!("Field {field_name} not found in {lit}"))
+            Expr::Field(expr, field_name) => {
+                let value = expr.eval(scope, env)?;
+                let ty = value.get_type();
+
+                let (_, _, get_field) = &*env.get_field(field_name, ty.clone())
+                    .ok_or(anyhow!("Field {field_name} not found in {ty}"))?;
+
+                Ok(get_field.call(value, env))
             }
-            Expr::TupleAccess(expr, index) => match expr.eval(scope)? {
+            Expr::TupleAccess(expr, index) => match expr.eval(scope, env)? {
                 Lit::Tuple(fields) => {
                     let index = *index as usize;
                     if index < fields.len() {
@@ -510,25 +349,113 @@ impl Eval for Expr {
                 lit => Err(anyhow!("Tuple access not supported for {}", lit.get_type()))
             }
             Expr::Tuple(elements) => {
-                Ok(Lit::Tuple(elements.iter().map(|expr| expr.eval(scope)).collect::<AnyResult<Vec<_>>>()?))
+                Ok(Lit::Tuple(elements.iter().map(|expr| expr.eval(scope, env)).collect::<AnyResult<Vec<_>>>()?))
             },
-            Expr::Var(var) => match var.as_str() {
-                "X" => Ok(Lit::Vec4(Vec4::X)),
-                "Y" => Ok(Lit::Vec4(Vec4::Y)),
-                "Z" => Ok(Lit::Vec4(Vec4::Z)),
-                "W" => Ok(Lit::Vec4(Vec4::W)),
-                "ONES" => Ok(Lit::Vec4(Vec4::ONE)),
-                "ZEROS" => Ok(Lit::Vec4(Vec4::ZERO)),
-                "PI" => Ok(Lit::F32(std::f32::consts::PI)),
-                "E" => Ok(Lit::F32(std::f32::consts::E)),
-                "IDENTITY" => Ok(Lit::Mat4x4(Mat4::IDENTITY)),
-                "INFINITY" => Ok(Lit::F32(f32::INFINITY)),
-                var_string => scope.get(var_string).with_context(|| format!("var {var} not found in scope")).cloned()
+            Expr::Var(var, _) => {
+                if let Some(value) = scope.get(var) {
+                    return Ok(value.clone());
+                }
+
+                let (_, value) = &*env.get_const(var)
+                    .ok_or(anyhow!("var {var} not found in scope"))?;
+
+                Ok(value.clone())
             },
             Expr::Lit(lit) => Ok(lit.clone()),
-            Expr::Block(block) => block.eval(scope)
+            Expr::Block(block) => block.eval(scope, env)
         }
     }
+
+    fn eval_type(&self, env: &Environment) -> AnyResult<Type> {
+        match self {
+            Expr::BinExpr(left, symbol, right) => {
+                let (left, sym, right) = (left.eval_type(env)?, symbol.as_str(), right.eval_type(env)?);
+
+                if sym == "==" || sym == "!=" {
+                    return Ok(Type::Bool);
+                }
+
+                let (_, op) = &*env.get_binary_op(sym, left.clone(), right.clone())
+                    .ok_or(anyhow!(
+                        "Could not find binary operation with signature {} {} {}",
+                        left, symbol, right
+                    ))?;
+
+                Ok(op.output(env))
+            }
+            Expr::UnaryExpr(symbol, right) => {
+                let (sym, right) = (symbol.as_str(), right.eval_type(env)?);
+
+                let (_, op) = &*env.get_unary_op(sym, right.clone())
+                    .ok_or(anyhow!(
+                        "Could not find unary operation with signature {} {}",
+                        symbol, right
+                    ))?;
+
+                Ok(op.output(env))
+            }
+            Expr::Application(fn_name, args) => {
+                let (input_types) = args.iter()
+                    .map(|arg| arg.eval_type(env))
+                    .collect::<AnyResult<Vec<_>>>()?;
+
+                if let ("select", [x_false, x_true, Type::Bool]) = (fn_name.as_str(), &input_types[..]) {
+                    return if x_false != x_true {
+                        Err(anyhow!("Types do not match in select for {} and {}", x_false, x_true))
+                    } else {
+                        Ok(x_false.clone())
+                    };
+                }
+
+                let (_, function) = &*env.get_fn(fn_name, input_types.clone())
+                    .ok_or(anyhow!(
+                        "Could not find signature {fn_name}({})",
+                        input_types.iter().map(|ty| ty.to_string()).collect::<Vec<_>>().join(", ")
+                    ))?;
+
+                Ok(function.output(env))
+            },
+            Expr::Dot(_, _, _) => Err(anyhow!("EVAL NOT SUPPORTED FOR DOT")),
+            Expr::Field(expr, field_name) => {
+                let ty = expr.eval_type(env)?;
+
+                let (_, _, get_field) = &*env.get_field(field_name, ty.clone())
+                    .ok_or(anyhow!("Field {field_name} not found in {ty}"))?;
+
+                Ok(get_field.output(env))
+            }
+            Expr::TupleAccess(expr, index) => match expr.eval_type(env)? {
+                Type::Tuple(fields) => {
+                    let index = *index as usize;
+                    if index < fields.len() {
+                        Ok(fields[index].clone())
+                    } else {
+                        Err(anyhow!("Index out of bounds for tuple, tried to access index {index} in a {}-tuple", fields.len()))
+                    }
+                },
+                ty => Err(anyhow!("Tuple access not supported for {}", ty))
+            }
+            Expr::Tuple(elements) => {
+                Ok(Type::Tuple(elements.iter().map(|expr| expr.eval_type(env)).collect::<AnyResult<Vec<_>>>()?))
+            },
+            Expr::Var(_, ty) => {
+                if *ty == Type::Auto {
+                    Err(anyhow!("eval_type must be run after assign_types to get rid of all instances of Type::Auto"))
+                } else {
+                    Ok(ty.clone())
+                }
+
+            },
+            Expr::Lit(lit) => Ok(lit.get_type()),
+            Expr::Block(block) => block.eval_type(env),
+        }
+    }
+}
+
+macro_rules! define_eval {
+    (($pat:pat => ($eval:expr, $ty:expr);)*) => {
+
+    };
 }
 
 #[cfg(test)]
@@ -536,7 +463,7 @@ mod tests {
     use glam::Vec4;
     use crate::assemble::AssembledStructure;
     use crate::enviroment::Environment;
-    use crate::interpreter::{Eval};
+    use crate::interpreter::Eval;
     use crate::parser::parse_block;
     use crate::test_helpers::{get_test_stuff, prettify_string};
 
@@ -548,7 +475,7 @@ mod tests {
             select(x + 2, 2, x < x + 1)
         }"#, &env).unwrap();
 
-        println!("Eval: {}", block.eval_into::<f32>().unwrap())
+        println!("Eval: {}", block.eval_into::<f32>(&env).unwrap())
     }
 
     #[test]
@@ -560,7 +487,7 @@ mod tests {
             select((x + 2, 5 * ZEROS), (-Infinity, x * ONES), x < x + 1)
         }"#, &env).unwrap();
 
-        let (min, max): (f32, Vec4) = block.eval_into().unwrap();
+        let (min, max): (f32, Vec4) = block.eval_into(&env).unwrap();
 
         println!("Eval: ({}, {})", min, max);
     }

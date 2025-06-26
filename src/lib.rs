@@ -9,6 +9,7 @@ pub mod test_helpers;
 mod utils;
 mod enviroment;
 mod any_value;
+mod scope;
 
 pub mod prelude {
     pub use crate::parser::*;

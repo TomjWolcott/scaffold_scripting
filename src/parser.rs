@@ -5,8 +5,7 @@ use pest::Parser;
 use pest_derive::Parser;
 use std::any::Any;
 use std::borrow::Borrow;
-use std::fmt::{write, Display};
-use std::sync::Arc;
+use std::fmt::Display;
 use crate::any_value::AnyValue;
 
 macro_rules! assert_rule {
@@ -871,7 +870,7 @@ pub enum Expr {
     Field(Box<Expr>, String),
     TupleAccess(Box<Expr>, usize),
     Tuple(Vec<Expr>),
-    Var(String),
+    Var(String, Type),
     Lit(Lit),
     Block(Box<Block>)
 }
@@ -936,7 +935,7 @@ impl Parse for Expr {
                 Expr::TupleAccess(Box::new(expr), index)
             },
             Rule::var => {
-                Expr::Var(expr_pairs.next().unwrap().as_str().to_string())
+                Expr::Var(expr_pairs.next().unwrap().as_str().to_string(), Type::Auto)
             },
             Rule::lit => {
                 Expr::Lit(Lit::parse(expr_pairs.next().unwrap(), env)?)
@@ -1003,7 +1002,7 @@ impl Display for Expr {
 
                 write!(f, ")")
             },
-            Self::Var(name) => {
+            Self::Var(name, _) => {
                 write!(f, "{}", name)
             },
             Self::Lit(lit) => {
@@ -1098,18 +1097,23 @@ pub struct Binding(pub String, pub Type);
 
 impl Parse for Binding {
     fn parse(pair: Pair<Rule>, env: &Environment) -> Result<Self, ParseError> {
-        assert_rule!(pair, binding);
-        let mut pairs = pair.into_inner();
+        match pair.as_rule() {
+            Rule::binding => {
+                let mut pairs = pair.into_inner();
 
-        assert_pairs!(pairs, 2);
+                assert_pairs!(pairs, 1..=2);
 
-        let name = pairs.next().unwrap().as_str().to_string();
+                let name = pairs.next().unwrap().as_str().to_string();
 
-        let ty_pair = pairs.next().unwrap();
+                let ty = Type::parse(pairs.next().unwrap(), env)?;
 
-        let ty = Type::parse(ty_pair, env)?;
-
-        Ok(Self(name, ty))
+                Ok(Self(name, ty))
+            }
+            Rule::ident => {
+                Ok(Self(pair.as_str().to_string(), Type::Auto))
+            }
+            rule => Err(ParseError::BadRule(rule, vec![Rule::binding, Rule::ident]))
+        }
     }
 }
 
@@ -1326,7 +1330,7 @@ impl Parse for KeyVal {
         let key = pairs.next().unwrap().as_str().to_string();
 
         let value = if pairs.len() == 0 {
-            Value::Expr(Expr::Var(key.clone()))
+            Value::Expr(Expr::Var(key.clone(), Type::Auto))
         } else {
             Value::parse(pairs.next().unwrap(), env)?
         };
@@ -1373,10 +1377,11 @@ impl Display for Value {
 #[cfg(test)]
 mod tests {
     use crate::enviroment::Environment;
-    use crate::interpreter::{Eval, Scope};
+    use crate::interpreter::Eval;
     use crate::parser::{parse_block, Document, Parse, Rule, ScaffoldParser};
     use crate::test_helpers;
     use pest::Parser;
+    use crate::scope::Scope;
 
     #[test]
     fn test_pest() {
@@ -1422,7 +1427,7 @@ mod tests {
             }
 
             fn abc(xyz: vec4, qqq: f32) -> (f64, f32) {
-                let qyz: f32 = 3.0;
+                let qyz = 3.0;
 
                 if (abc > 3.0) {
                     s = 4.0;
@@ -1463,7 +1468,8 @@ mod tests {
 
         let block = parse_block(script, &Environment::new()).unwrap();
         let string = test_helpers::prettify_string(format!("{block}"));
+        let mut env = Environment::new();
 
-        println!("{}\nwhich returns: {:?}", string, block.eval(&mut Scope::new()));
+        println!("{}\nwhich returns: {:?}", string, block.eval(&mut Scope::new(), &env));
     }
 }

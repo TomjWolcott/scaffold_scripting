@@ -1,15 +1,15 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use crate::parser::{Bound, Document, Expr, Instance, KeyVal, Method, MethodKey, Stmt, Value as ParseValue};
+use crate::parser::{Binding, Bound, Document, Expr, Instance, KeyVal, Lit, Method, MethodKey, Stmt, Type, Value as ParseValue};
 use crate::structure::{Field, Structure, TryFromRonValue};
 use crate::tree_walk::{TreeNodeMut, WalkTreeMut};
 
 use anyhow::{anyhow, Context, Result as AnyResult};
 use ron::Value;
-use crate::ast_operations::{AlphaConvert, IdentScope};
+use crate::ast_operations::{AlphaConvert, AssignTypes, IdentScope};
 use crate::enviroment::Environment;
-use crate::interpreter::{Eval, Scope};
-
+use crate::interpreter::Eval;
+use crate::scope::Scope;
 
 impl Structure {
     fn get_instance_structure(&self, document: &Document) -> AnyResult<Structure> {
@@ -25,11 +25,11 @@ impl Structure {
     fn create_instance(&self, instance: &Instance) -> Structure {
         let fields = instance.key_vals.iter().map(|KeyVal { key, value }| {
             (key.clone(), match value {
-                ParseValue::Expr(Expr::Var(var_name)) => {
+                ParseValue::Expr(Expr::Var(var_name, _)) => {
                     if let Some(Field::Structure(structure)) = self.get_field(var_name) {
                         Field::Structure(structure.clone())
                     } else {
-                        Field::Expr(Expr::Var(var_name.clone()))
+                        Field::Expr(Expr::Var(var_name.clone(), Type::Auto))
                     }
                 },
                 ParseValue::Expr(expr) => Field::Expr(expr.clone()),
@@ -59,7 +59,7 @@ impl Structure {
         Ok(fields)
     }
 
-    fn assemble_methods(&self, document: &Document) -> AnyResult<Vec<Method>> {
+    fn assemble_methods(&self, document: &Document, env: &Environment) -> AnyResult<Vec<Method>> {
         let mut methods = Vec::new();
         let class = document.get_class(&self.name)
             .with_context(|| format!("Couldn't find class {}", self.name))?;
@@ -67,6 +67,7 @@ impl Structure {
         for method in class.methods.iter() {
             methods.push(self.assemble_method(
                 document,
+                env,
                 MethodKey::new(method.implementation.as_ref(), &method.name)
             )?);
         }
@@ -75,10 +76,12 @@ impl Structure {
     }
 
     /// Assembles a method to inline trait fn calls and perform some small optimizations
-    fn assemble_method(&self, document: &Document, method_key: MethodKey) -> AnyResult<Method> {
+    fn assemble_method(&self, document: &Document, env: &Environment, method_key: MethodKey) -> AnyResult<Method> {
         self.assemble_method_rec(document, method_key, "".to_string()).map(|mut method| {
+            let mut type_scope = (&method.inputs).into();
+            let _ = method.body.assign_types_rec(&mut type_scope, env);
             method.body.alpha_convert(&mut IdentScope::new());
-            method.body.inline_blocks();
+            method.body.inline_blocks(env).unwrap();
             method.body.cull_single_use_vars();
             method.body.cull_noops();
 
@@ -98,7 +101,7 @@ impl Structure {
         method.body.walk_tree_mut(&mut |node| {
             let TreeNodeMut::Expr(expr) = node else { return Ok::<(), anyhow::Error>(()) };
             match expr {
-                Expr::Var(var) => {
+                Expr::Var(var, _) => {
                     if self.get_field(&var).is_some() || var.starts_with("__") {
                         *var = format!("{id}{var}");
                     }
@@ -140,7 +143,7 @@ impl Structure {
 #[derive(Debug, Clone)]
 pub struct AssembledStructure {
     pub(crate) fields: Vec<(String, Expr)>,
-    pub evaluated_scope: Scope,
+    pub evaluated_scope: Scope<Lit>,
     pub(crate) methods: Vec<Method>,
     pub env: Environment
 }
@@ -171,7 +174,7 @@ impl AssembledStructure {
             structure = instance_structure;
         }
 
-        let methods = structure.assemble_methods(document)?;
+        let methods = structure.assemble_methods(document, env)?;
         fields.append(&mut structure.assemble_fields()?);
 
         Ok(Self {
@@ -182,11 +185,11 @@ impl AssembledStructure {
         })
     }
 
-    pub fn evaluate_fields(&mut self, mut scope: Scope) -> AnyResult<()> {
+    pub fn evaluate_fields(&mut self, mut scope: Scope<Lit>) -> AnyResult<()> {
         self.evaluated_scope = Scope::new();
 
         for (name, expr) in self.fields.iter() {
-            let lit = expr.eval(&mut scope)?;
+            let lit = expr.eval(&mut scope, &self.env)?;
             self.evaluated_scope.push(name.clone(), lit.clone());
             scope.push(name.clone(), lit);
         }
@@ -232,7 +235,7 @@ impl Display for AssembledStructure {
 mod tests {
     use crate::assemble::AssembledStructure;
     use crate::parser::{Lit, MethodKey};
-    use crate::prelude::Scope;
+    use crate::scope::Scope;
     use crate::test_helpers;
     use crate::test_helpers::{better_prettify, prettify_string};
 
@@ -243,6 +246,7 @@ mod tests {
 
         let assembled_method = structure.assemble_method(
             &document,
+            &env,
             MethodKey::new(Some("Proj"), "proj")
         ).unwrap();
 

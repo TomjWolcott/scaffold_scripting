@@ -4,13 +4,13 @@ use dyn_clone::DynClone;
 
 // DynPartialEq stuff is from https://quinedot.github.io/rust-learning/dyn-trait-eq.html#:~:text=The%20general%20idea%20is%20that,by%20upcasting%20to%20dyn%20DynCompare%20.
 
-pub trait AsDynPartialEq: Any {
+pub trait AsDynPartialEq: Any + 'static + Send + Sync {
     fn as_any(&self) -> &dyn Any;
 
     fn as_dyn_partial_eq(&self) -> &dyn DynPartialEq;
 }
 
-impl<T: Any + PartialEq> AsDynPartialEq for T {
+impl<T: Any + PartialEq + 'static + Send + Sync> AsDynPartialEq for T {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -24,7 +24,7 @@ pub trait DynPartialEq: AsDynPartialEq {
     fn dyn_eq(&self, other: &dyn DynPartialEq) -> bool;
 }
 
-impl<T: Any + PartialEq> DynPartialEq for T {
+impl<T: Any + PartialEq + 'static + Send + Sync> DynPartialEq for T {
     fn dyn_eq(&self, other: &dyn DynPartialEq) -> bool {
         if let Some(other) = other.as_any().downcast_ref::<T>() {
             self == other
@@ -52,7 +52,7 @@ impl PartialEq<&Self> for Box<dyn AnyValue> {
     }
 }
 
-pub trait AnyValue: Any + DynClone + DynPartialEq {}
+pub trait AnyValue: Any + DynClone + DynPartialEq + 'static + Send + Sync {}
 
 impl Debug for dyn AnyValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {

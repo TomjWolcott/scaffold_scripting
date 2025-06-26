@@ -77,7 +77,7 @@ impl<E> WalkTreeMut<E> for Expr {
                     element.walk_tree_mut_with_options(options, func)?;
                 }
             }
-            Expr::Var(_) => {},
+            Expr::Var(_, _) => {},
             Expr::Lit(_) => {},
             Expr::Block(block) => block.walk_tree_mut_with_options(options, func)?
         }
