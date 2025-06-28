@@ -5,8 +5,11 @@ use pest::Parser;
 use pest_derive::Parser;
 use std::any::Any;
 use std::borrow::Borrow;
-use std::fmt::Display;
+use std::fmt::{Display, Formatter};
+use anyhow::anyhow;
 use crate::any_value::AnyValue;
+use crate::prelude::TreeNodeMut;
+use crate::tree_walk::{Options, RecOrdering, WalkTreeMut};
 
 macro_rules! assert_rule {
     ($pair:expr, $($rule:ident)|*) => {
@@ -717,6 +720,72 @@ pub fn parse_block(script: impl AsRef<str>, env: &Environment) -> Result<Block, 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Block(pub Vec<Stmt>, pub Option<Expr>);
 
+impl Block {
+    fn simplify_destructuring(&mut self) {
+        self.walk_tree_mut_with_options(Options::default(), &mut |node| {
+            match node {
+                TreeNodeMut::Block(block) => {
+                    let mut i = 0;
+
+                    while i < block.0.len() {
+                        if let Stmt::Declare(LvalueDeclare::TupleDestructure(_), _) = &block.0[i] {
+                            let tuple_name = "____tuple".to_string();
+
+                            let Stmt::Declare(lvalue, expr) = block.0.remove(i) else { unreachable!() };
+                            let mut destructure_stack = vec![(lvalue, Expr::Var(tuple_name.clone(), Type::Auto))];
+                            let mut new_stmts = vec![Stmt::Declare(
+                                LvalueDeclare::Binding(Binding(tuple_name, Type::Auto)),
+                                expr
+                            )];
+
+                            while let Some((lvalue, tuple_access)) = destructure_stack.pop() {
+                                match lvalue {
+                                    LvalueDeclare::TupleDestructure(v) => {
+                                        destructure_stack.append(&mut v.into_iter().enumerate().map(|(i, lvalue)| {
+                                            (lvalue, Expr::TupleAccess(Box::new(tuple_access.clone()), i))
+                                        }).rev().collect());
+                                    }
+                                    lvalue => {
+                                        new_stmts.push(Stmt::Declare(lvalue, tuple_access));
+                                    }
+                                }
+                            }
+
+                            block.0.splice(i..i, new_stmts);
+                        } else if let Stmt::Assign(Lvalue::TupleDestructure(_), _) = &block.0[i] {
+                            let tuple_name = "____tuple".to_string();
+
+                            let Stmt::Assign(lvalue, expr) = block.0.remove(i) else { unreachable!() };
+                            let mut destructure_stack = vec![(lvalue, Expr::Var(tuple_name.clone(), Type::Auto))];
+                            let mut new_stmts = vec![Stmt::Declare(
+                                LvalueDeclare::Binding(Binding(tuple_name, Type::Auto)),
+                                expr
+                            )];
+
+                            while let Some((lvalue, tuple_access)) = destructure_stack.pop() {
+                                match lvalue {
+                                    Lvalue::TupleDestructure(v) => {
+                                        destructure_stack.append(&mut v.into_iter().enumerate().map(|(i, lvalue)| {
+                                            (lvalue, Expr::TupleAccess(Box::new(tuple_access.clone()), i))
+                                        }).rev().collect());
+                                    }
+                                    lvalue => {
+                                        new_stmts.push(Stmt::Assign(lvalue, tuple_access));
+                                    }
+                                }
+                            }
+                            block.0.splice(i..i, new_stmts);
+                        }
+                        i += 1;
+                    }
+                }
+                _ => {}
+            }
+            Ok::<(), ()>(())
+        }).unwrap()
+    }
+}
+
 impl Parse for Block {
     fn parse(pair: Pair<Rule>, env: &Environment) -> Result<Self, ParseError> {
         assert_rule!(pair, block | block_expr);
@@ -739,7 +808,11 @@ impl Parse for Block {
             }
         }
 
-        Ok(Self(stmts, expr))
+        let mut block = Self(stmts, expr);
+
+        block.simplify_destructuring();
+
+        Ok(block)
     }
 }
 
@@ -763,8 +836,8 @@ impl Display for Block {
 // stmt  = { (decl | asgn | ifelse | (expr ~ ";")) }
 #[derive(Debug, PartialEq, Clone)]
 pub enum Stmt {
-    Declare(Binding, Expr),
-    Assign(String, Expr),
+    Declare(LvalueDeclare, Expr),
+    Assign(Lvalue, Expr),
     IfElse((Expr, Block), Vec<(Expr, Block)>, Option<Block>),
     Expr(Expr),
     Noop,
@@ -784,7 +857,7 @@ impl Parse for Stmt {
                 assert_pairs!(pairs, 2);
 
                 Stmt::Declare(
-                    Binding::parse(pairs.next().unwrap(), env)?,
+                    LvalueDeclare::parse(pairs.next().unwrap(), env)?,
                     Expr::parse(pairs.next().unwrap(), env)?
                 )
             },
@@ -793,7 +866,7 @@ impl Parse for Stmt {
                 assert_pairs!(pairs, 2);
 
                 Stmt::Assign(
-                    pairs.next().unwrap().as_str().to_string(),
+                    Lvalue::parse(pairs.next().unwrap(), env)?,
                     Expr::parse(pairs.next().unwrap(), env)?
                 )
             },
@@ -830,8 +903,8 @@ impl Parse for Stmt {
 impl Display for Stmt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Declare(binding, expr) => {
-                write!(f, "let {} = {};", binding, expr)
+            Self::Declare(lvalue, expr) => {
+                write!(f, "let {} = {};", lvalue, expr)
             },
             Self::Assign(name, expr) => {
                 write!(f, "{} = {};", name, expr)
@@ -852,6 +925,180 @@ impl Display for Stmt {
             Self::Noop => {
                 write!(f, "")
             }
+        }
+    }
+}
+
+// decl_lvalue = { (binding | ident) | ("(" ~ w ~ (decl_lvalue ~ w ~ "," ~ w)+ ~ (decl_lvalue ~ w)? ~ ")") }
+#[derive(Debug, PartialEq, Clone)]
+pub enum LvalueDeclare {
+    Binding(Binding),
+    TupleDestructure(Vec<LvalueDeclare>)
+}
+
+impl LvalueDeclare {
+    pub fn get_binding(&self) -> &Binding {
+        match self {
+            LvalueDeclare::Binding(binding) => binding,
+            LvalueDeclare::TupleDestructure(v) => panic!("All tuple destructuring should have been removed at this point: {v:?}")
+        }
+    }
+
+    pub fn get_binding_mut(&mut self) -> &mut Binding {
+        match self {
+            LvalueDeclare::Binding(binding) => binding,
+            LvalueDeclare::TupleDestructure(v) => panic!("All tuple destructuring should have been removed at this point: {v:?}")
+        }
+    }
+}
+
+impl Parse for LvalueDeclare {
+    fn parse(pair: Pair<Rule>, env: &Environment) -> Result<Self, ParseError> {
+        assert_rule!(pair, decl_lvalue);
+        let mut pairs = pair.into_inner();
+        assert_pairs!(pairs, 1..);
+        let mut lvalue_pair = pairs.next().unwrap();
+
+        match lvalue_pair.as_rule() {
+            Rule::binding => {
+                Ok(LvalueDeclare::Binding(Binding::parse(lvalue_pair, env)?))
+            }
+            Rule::ident => {
+                Ok(LvalueDeclare::Binding(Binding(lvalue_pair.as_str().to_string(), Type::Auto)))
+            }
+            Rule::decl_lvalue => {
+                let mut tuple_destructure_items = Vec::new();
+
+                loop {
+                    tuple_destructure_items.push(Self::parse(lvalue_pair, env)?);
+
+                    let Some(next_pair) = pairs.next() else { break; };
+
+                    lvalue_pair = next_pair;
+                }
+
+                Ok(LvalueDeclare::TupleDestructure(tuple_destructure_items))
+            }
+            r => {
+                Err(ParseError::BadRule(r, vec![Rule::binding, Rule::ident, Rule::decl_lvalue]))
+            }
+        }
+    }
+}
+
+impl Display for LvalueDeclare {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Binding(Binding(var, Type::Auto)) => write!(f, "{var}"),
+            Self::Binding(Binding(var, ty)) => write!(f, "{var}: {ty}"),
+            Self::TupleDestructure(tuple_items) => write!(f, "({})", tuple_items.iter().map(|lvalue| {
+                format!("{lvalue}")
+            }).collect::<Vec<_>>().join(", "))
+        }
+    }
+}
+
+// lvalue = { (ident ~ ("." ~ (ident | tuple_id))*) | ("(" ~ w ~ (lvalue ~ w ~ "," ~ w)+ ~ (lvalue ~ w)? ~ ")") }
+#[derive(Debug, PartialEq, Clone)]
+pub enum Lvalue {
+    Var(String),
+    Fields(String, Vec<LvalueField>),
+    TupleDestructure(Vec<Lvalue>)
+}
+
+impl Lvalue {
+    pub fn get_var_name(&self) -> &String {
+        match self {
+            Lvalue::Var(var) => var,
+            Lvalue::Fields(var, _) => var,
+            Lvalue::TupleDestructure(v) => panic!("All tuple destructuring should have been removed at this point: {v:?}")
+        }
+    }
+
+    pub fn get_var_name_mut(&mut self) -> &mut String {
+        match self {
+            Lvalue::Var(var) => var,
+            Lvalue::Fields(var, _) => var,
+            Lvalue::TupleDestructure(v) => panic!("All tuple destructuring should have been removed at this point: {v:?}")
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum LvalueField {
+    Field(String),
+    TupleAccess(usize)
+}
+
+impl Display for LvalueField {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Field(s) => write!(f, "{s}"),
+            Self::TupleAccess(n) => write!(f, "{n}")
+        }
+    }
+}
+
+impl Parse for Lvalue {
+    fn parse(pair: Pair<Rule>, env: &Environment) -> Result<Self, ParseError> {
+        assert_rule!(pair, lvalue);
+        let mut pairs = pair.into_inner();
+        assert_pairs!(pairs, 1..);
+        let mut lvalue_pair = pairs.next().unwrap();
+
+        match lvalue_pair.as_rule() {
+            Rule::ident => {
+                if pairs.len() == 0 {
+                    Ok(Lvalue::Var(lvalue_pair.as_str().to_string()))
+                } else {
+                    let mut next_pair = pairs.next().unwrap();
+                    let mut fields = Vec::new();
+
+                    loop {
+                        fields.push(match next_pair.as_rule() {
+                            Rule::ident => LvalueField::Field(next_pair.as_str().to_string()),
+                            Rule::tuple_id => LvalueField::TupleAccess(next_pair.as_str().parse().unwrap()),
+                            r => { return Err(ParseError::BadRule(r, vec![Rule::ident, Rule::tuple_id])) }
+                        });
+
+                        let Some(next_next_pair) = pairs.next() else { break; };
+
+                        next_pair = next_next_pair;
+                    }
+
+                    Ok(Lvalue::Fields(lvalue_pair.as_str().to_string(), fields))
+                }
+            }
+            Rule::lvalue => {
+                let mut tuple_destructure_items = Vec::new();
+
+                loop {
+                    tuple_destructure_items.push(Self::parse(lvalue_pair, env)?);
+
+                    let Some(next_pair) = pairs.next() else { break; };
+
+                    lvalue_pair = next_pair;
+                }
+
+                Ok(Lvalue::TupleDestructure(tuple_destructure_items))
+            }
+            r => {
+                Err(ParseError::BadRule(r, vec![Rule::ident, Rule::lvalue]))
+            }
+        }
+    }
+}
+
+impl Display for Lvalue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Var(var) => write!(f, "{var}"),
+            Self::Fields(var, fields) => write!(f, "{var}{}", fields.iter().map(|field| {
+                format!(".{field}")
+            }).collect::<String>()),
+            Self::TupleDestructure(tuple_items) => write!(f, "({})", tuple_items.iter().map(|lvalue| {
+                format!("{lvalue}")
+            }).collect::<Vec<_>>().join(", "))
         }
     }
 }
@@ -877,7 +1124,7 @@ pub enum Expr {
 
 impl Parse for Expr {
     fn parse(pair: Pair<Rule>, env: &Environment) -> Result<Self, ParseError> {
-        assert_rule!(pair, expr | app | dot | field | tuple_access | tuple | var | lit | block_expr_wrapper);
+        assert_rule!(pair, expr | app | dot | tuple | var | lit | block_expr_wrapper);
         let rule = pair.as_rule();
         let mut expr_pairs = pair.into_inner();
 
@@ -921,18 +1168,6 @@ impl Parse for Expr {
                 }
 
                 Expr::Dot(name, method, args)
-            },
-            Rule::field => {
-                let expr = Expr::parse(expr_pairs.next().unwrap(), env)?;
-                let field = expr_pairs.next().unwrap().as_str().to_string();
-
-                Expr::Field(Box::new(expr), field)
-            },
-            Rule::tuple_access => {
-                let expr = Expr::parse(expr_pairs.next().unwrap(), env)?;
-                let index = expr_pairs.next().unwrap().as_str().parse().unwrap();
-
-                Expr::TupleAccess(Box::new(expr), index)
             },
             Rule::var => {
                 Expr::Var(expr_pairs.next().unwrap().as_str().to_string(), Type::Auto)
@@ -1038,10 +1273,21 @@ impl Parse for Op {
         let mut pairs = pair.into_inner();
         assert_pairs!(pairs, 1..=3);
 
-        Ok(match pairs.len() {
-            1 => {
-                let pair = pairs.next().unwrap();
+        Ok(match (pairs.len(), pairs.next().unwrap()) {
+            (n, pair) if pair.as_rule() == Rule::prec0 && n > 1 => {
+                let mut op = Op::parse(pair, env)?;
 
+                while let Some(pair) = pairs.next() {
+                    op = match pair.as_rule() {
+                        Rule::ident => Op::Expr(Expr::Field(Box::new(op.to_expr()), pair.as_str().to_string())),
+                        Rule::tuple_id => Op::Expr(Expr::TupleAccess(Box::new(op.to_expr()), pair.as_str().parse().unwrap())),
+                        r => return Err(ParseError::BadRule(r, vec![Rule::ident, Rule::tuple_id]))
+                    }
+                }
+
+                op
+            },
+            (1, pair) => {
                 match pair.as_rule() {
                     Rule::prec0 | Rule::unary | Rule::prec1 | Rule::prec2 | Rule::prec3 | Rule::prec4 => {
                         Op::Solo(Box::new(Op::parse(pair, env)?))
@@ -1051,20 +1297,20 @@ impl Parse for Op {
                     }
                 }
             },
-            2 => {
-                let op = pairs.next().unwrap().as_str().to_string();
+            (2, first_pair) => {
+                let op = first_pair.as_str().to_string();
                 let right = Op::parse(pairs.next().unwrap(), env)?;
 
                 Op::Unary(op, Box::new(right))
             },
-            3 => {
-                let left = Op::parse(pairs.next().unwrap(), env)?;
+            (3, left_pair) => {
+                let left = Op::parse(left_pair, env)?;
                 let op = pairs.next().unwrap().as_str().to_string();
                 let right = Op::parse(pairs.next().unwrap(), env)?;
 
                 Op::Binop(precedence, left.to_expr(), op, Box::new(right))
             },
-            _ => {panic!("")}
+            left_over => {panic!("{left_over:?}")}
         })
     }
 }
@@ -1460,10 +1706,11 @@ mod tests {
     #[test]
     fn tuple_test() {
         let script = r#"{
-            let a: (f32, f32) = (1.0, 2.0);
-            let b: (f32, (f32, f32), mat4x4) = (1.0, (1 + 3, -.1 + 8), 3 * mat4x4(X, Z, Y, W));
+            let (a, b) = (1.0, 2.0);
+            let v = vec4(1, 3, 4, 5);
+            (a, (b, a), v.x) = (4.0, (1 + 3, -.1 + 8), 8.0);
             let c: (f32, vec4, f32, f32) = (1.0, vec4(1, 3, 2, 1) / 8, 3.0, 4.0);
-            b.1
+            (v, a, b)
         }"#;
 
         let block = parse_block(script, &Environment::new()).unwrap();

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Display};
 use glam::{Mat4, Vec4};
 use crate::assemble::AssembledStructure;
-use crate::parser::{Binding, Block, Expr, Lit, Stmt, Type};
+use crate::parser::{Binding, Block, Expr, Lit, Lvalue, LvalueDeclare, LvalueField, Stmt, Type};
 use anyhow::{anyhow, Context, Result as AnyResult};
 use once_cell::sync::Lazy;
 use crate::enviroment::{Environment, SslType};
@@ -223,21 +223,30 @@ impl Eval for Block {
 impl Eval for Stmt {
     fn eval(&self, scope: &mut Scope<Lit>, env: &Environment) -> AnyResult<Lit> {
         match self {
-            Stmt::Declare(Binding(var, _), expr) => {
-                let eval = expr.eval(scope, env)?;
-                scope.push(var.clone(), eval);
-            }
-            Stmt::Assign(var, expr) => {
-                let eval_field = expr.eval(scope, env)?;
-                let field = scope.get_mut(var).with_context(|| format!("var {var} not found in scope"))?;
+            Stmt::Declare(lvalue, expr) => {
+                let lit = expr.eval(scope, env)?;
+                let LvalueDeclare::Binding(Binding(var, ty)) = lvalue else {
+                    return Err(anyhow!("Expected binding, but found tuple destruct, which should have been removed by this point"));
+                };
 
-                if field.matches_type(&eval_field) {
-                    *field = eval_field;
-                } else {
-                    return Err(anyhow!(
-                        "Types do not match: {} and {} when assigning var {var}",
-                        field.get_type(), eval_field.get_type()
-                    ));
+                scope.push(var.clone(), lit)
+            }
+            Stmt::Assign(lvalue, expr) => {
+                let lit = expr.eval(scope, env)?;
+                match lvalue {
+                    Lvalue::Fields(var, fields) => {
+                        let val = scope.get_mut(var).with_context(|| format!("var {var} not found in scope"))?;
+
+                        *val = LvalueField::get_fields(val.clone(), lit, &fields[..], env)?;
+                    }
+                    Lvalue::Var(var) => {
+                        let val = scope.get_mut(var).with_context(|| format!("var {var} not found in scope"))?;
+
+                        *val = lit;
+                    }
+                    Lvalue::TupleDestructure(_) => return Err(
+                        anyhow!("Expected binding, but found tuple destruct, which should have been removed by this point")
+                    )
                 }
             }
             Stmt::IfElse((if_expr, if_block), else_ifs, else_block) => {
@@ -270,6 +279,34 @@ impl Eval for Stmt {
 
     fn eval_type(&self, _env: &Environment) -> AnyResult<Type> {
         Ok(Type::Unit)
+    }
+}
+
+impl LvalueField {
+    fn get_fields(val: Lit, lit: Lit, fields: &[Self], env: &Environment) -> AnyResult<Lit> {
+        if fields.len() == 0 {
+            return Ok(lit);
+        }
+
+        match &fields[0] {
+            LvalueField::Field(field) => {
+                let f = &*env.get_field(&field, val.get_type()).ok_or(
+                    anyhow!("Could not find field {} on type {}", field, val.get_type())
+                )?.2;
+
+                let new_lit = LvalueField::get_fields(f.get(val.clone(), env), lit, &fields[1..], env)?;
+
+                Ok(f.set(val, new_lit, env))
+            }
+            LvalueField::TupleAccess(i) => {
+                let Lit::Tuple(mut v) = val else { return Err(anyhow!("Cannot call tuple access on {}", val)); };
+                if *i >= v.len() { return Err(anyhow!("Tuple accessor out of bounds: {i} >= {}", v.len())) };
+
+                v[*i] = LvalueField::get_fields(v[*i].clone(), lit, &fields[1..], env)?;
+
+                Ok(Lit::Tuple(v))
+            }
+        }
     }
 }
 
@@ -332,10 +369,10 @@ impl Eval for Expr {
                 let value = expr.eval(scope, env)?;
                 let ty = value.get_type();
 
-                let (_, _, get_field) = &*env.get_field(field_name, ty.clone())
+                let (_, _, field) = &*env.get_field(field_name, ty.clone())
                     .ok_or(anyhow!("Field {field_name} not found in {ty}"))?;
 
-                Ok(get_field.call(value, env))
+                Ok(field.get(value, env))
             }
             Expr::TupleAccess(expr, index) => match expr.eval(scope, env)? {
                 Lit::Tuple(fields) => {
@@ -438,9 +475,9 @@ impl Eval for Expr {
             Expr::Tuple(elements) => {
                 Ok(Type::Tuple(elements.iter().map(|expr| expr.eval_type(env)).collect::<AnyResult<Vec<_>>>()?))
             },
-            Expr::Var(_, ty) => {
+            Expr::Var(name, ty) => {
                 if *ty == Type::Auto {
-                    Err(anyhow!("eval_type must be run after assign_types to get rid of all instances of Type::Auto"))
+                    Err(anyhow!("Type::Auto found on {name}.  eval_type must be run after assign_types to get rid of all instances of Type::Auto"))
                 } else {
                     Ok(ty.clone())
                 }

@@ -1,6 +1,6 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use crate::parser::{Binding, Bound, Document, Expr, Instance, KeyVal, Lit, Method, MethodKey, Stmt, Type, Value as ParseValue};
+use crate::parser::{Binding, Bound, Document, Expr, Instance, KeyVal, Lit, LvalueDeclare, Method, MethodKey, Stmt, Type, Value as ParseValue};
 use crate::structure::{Field, Structure, TryFromRonValue};
 use crate::tree_walk::{TreeNodeMut, WalkTreeMut};
 
@@ -125,7 +125,7 @@ impl Structure {
                     )?;
 
                     for (arg, binding) in args.iter().zip(inputs).rev() {
-                        body.0.insert(0, Stmt::Declare(binding, arg.clone()));
+                        body.0.insert(0, Stmt::Declare(LvalueDeclare::Binding(binding), arg.clone()));
                     }
 
                     *expr = Expr::Block(Box::new(body));

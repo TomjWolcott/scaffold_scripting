@@ -33,40 +33,30 @@ function = { "fn" ~ w ~ ident ~ "(" ~
 
 block_wrapper = { block }
 block = { "{" ~ w ~ (stmt ~ w)* ~ (expr ~ w)? ~ "}" }
-stmt  = { (decl | asgn | ifelse | (expr ~ ";")) } // TODO: Add pattern matching for destructuring declares
-    decl = { "let" ~ w ~ (binding | ident) ~ w ~ "=" ~ w ~ expr ~ w ~ ";" }
-    asgn = { ident ~ w ~ "=" ~ w ~ expr ~ ";" }
+stmt  = { ( ifelse | for_stmt | ((decl | asgn | expr) ~ ";") ) }
+    decl = { "let" ~ w ~ decl_lvalue ~ w ~ "=" ~ w ~ expr }
+        decl_lvalue = { (binding | ident) | ("(" ~ w ~ (decl_lvalue ~ w ~ "," ~ w)+ ~ (decl_lvalue ~ w)? ~ ")") }
+    asgn = { lvalue ~ w ~ "=" ~ w ~ expr }
+        lvalue = { (ident ~ ("." ~ (ident | tuple_id))*) | ("(" ~ w ~ (lvalue ~ w ~ "," ~ w)+ ~ (lvalue ~ w)? ~ ")") }
     ifelse = { "if" ~ w ~ "(" ~ w ~ expr ~ w ~ ")" ~ w ~ block ~ (w ~ "else if" ~ w ~ "(" ~ w ~ expr ~ w ~ ")" ~ w ~ block)* ~ (w ~ "else" ~ w ~ block)? }
+    for_stmt = { "for" ~ w ~ "(" ~ w ~ (asgn | decl) ~ w ~ ";" ~ w ~ expr ~ w ~ ";" ~ w ~ asgn ~ w ~ ")" ~ w ~ block }
 
 expr = { (prec4) }
     exprs = { "(" ~ w ~ (expr ~ w ~ "," ~ w)* ~ (expr ~ w)? ~ ")" }
-    prec0 = { "(" ~ w ~ prec4 ~ w ~ ")" | app | dot | field | tuple_access | tuple | lit | var | block_expr_wrapper }
+    prec0 = { "(" ~ w ~ prec4 ~ w ~ ")" | app | dot | tuple | lit | var | block_expr_wrapper }
         app       = { ident ~ w ~ exprs }
         dot       = { ident ~ "." ~ ident ~ exprs }
-        field      = { (var) ~ "." ~ ident } // TODO: Expand this to support nested fields
-        tuple_access = { (var | tuple) ~ "." ~ tuple_id }
-            tuple_id = { NUMBER+ }
         tuple     = { "(" ~ w ~ (expr ~ w ~ "," ~ w)+ ~ (expr ~ w)? ~ ")" }
         var       = { ident }
         lit       = { (number | bool) }
             bool       = { "true" | "false" }
             number     = { (NUMBER+ ~ "."? ~ NUMBER*) | (NUMBER* ~ "." ~ NUMBER+) | "Infinity" }
-//             vec4       = { "Vec4" ~ "(" ~
-//                 w ~ number ~ w ~ "," ~
-//                 w ~ number ~ w ~ "," ~
-//                 w ~ number ~ w ~ "," ~
-//                 w ~ number ~ w ~ ("," ~ w)?
-//             ~ ")" }
-//             mat4       = { "Mat4" ~ "(" ~
-//                 w ~ vec4 ~ w ~ "," ~
-//                 w ~ vec4 ~ w ~ "," ~
-//                 w ~ vec4 ~ w ~ "," ~
-//                 w ~ vec4 ~ w ~ ("," ~ w)?
-//             ~ ")" }
         block_expr = { "{" ~ w ~ (stmt ~ w)* ~ (expr ~ w) ~ "}" }
         block_expr_wrapper = { block_expr }
-    unary = { (unary_op ~ w ~ unary | prec0) }
+
+    unary = { (unary_op ~ w ~ unary | prec0 ~ ("." ~ (tuple_id | ident))*) }
         unary_op = { "!" | "-" | "+" }
+        tuple_id = { NUMBER+ }
     prec1 = { unary ~ (w ~ op1 ~ w ~ prec1)? }
         op1 = { "*" | "/" }
     prec2 = { prec1 ~ (w ~ op2 ~ w ~ prec2)? }

@@ -14,11 +14,11 @@ impl<T: Display + Clone + PartialEq> Scope<T> {
     }
 
     pub fn get(&self, name: impl AsRef<str>) -> Option<&T> {
-        self.0.iter().find(|(n, _)| n.as_str() == name.as_ref()).map(|(_, field)| field)
+        self.0.iter().rev().find(|(n, _)| n.as_str() == name.as_ref()).map(|(_, field)| field)
     }
 
     pub fn get_mut(&mut self, name: impl AsRef<str>) -> Option<&mut T> {
-        self.0.iter_mut().find(|(n, _)| n.as_str() == name.as_ref()).map(|(_, field)| field)
+        self.0.iter_mut().rev().find(|(n, _)| n.as_str() == name.as_ref()).map(|(_, field)| field)
     }
 
     pub fn push(&mut self, name: String, field: T) {

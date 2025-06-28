@@ -190,10 +190,10 @@ static GLOBAL_ENV: Lazy<Environment> = Lazy::new(|| {
     env.register_fn(|f: f32| f.signum(), "sign".into()).unwrap();
     env.register_fn(|v: Vec4| v.signum(), "sign".into()).unwrap();
 
-    env.register_field(|v: Vec4| v.x, "x".into(), None).unwrap();
-    env.register_field(|v: Vec4| v.y, "y".into(), None).unwrap();
-    env.register_field(|v: Vec4| v.z, "z".into(), None).unwrap();
-    env.register_field(|v: Vec4| v.w, "w".into(), None).unwrap();
+    env.register_field((|v: Vec4| v.x, |mut v: Vec4, n: f32| {v.x = n; v}), "x".into(), None).unwrap();
+    env.register_field((|v: Vec4| v.y, |mut v: Vec4, n: f32| {v.y = n; v}), "y".into(), None).unwrap();
+    env.register_field((|v: Vec4| v.z, |mut v: Vec4, n: f32| {v.z = n; v}), "z".into(), None).unwrap();
+    env.register_field((|v: Vec4| v.w, |mut v: Vec4, n: f32| {v.w = n; v}), "w".into(), None).unwrap();
 
     env.register_const("X".into(), Vec4::X.lit(&env));
     env.register_const("Y".into(), Vec4::Y.lit(&env));
@@ -315,13 +315,13 @@ impl Environment {
     }
 
 
-    pub fn register_field<In1: SslType, Out: SslType, FN: IntoSslUnaryOp<In1, Out>>(
+    pub fn register_field<Var: SslType, Value: SslType, FN: IntoSslField<Var, Value>>(
         &mut self,
         function: FN,
         name: SslIdentifier,
         wgsl_index: Option<usize>
     ) -> Result<(), RegisterError> {
-        let in_type = In1::ssl_type(&self);
+        let in_type = Var::ssl_type(&self);
 
         self.inner_mut().field.insert(
             (name.name, in_type),
@@ -331,7 +331,7 @@ impl Environment {
         Ok(())
     }
 
-    pub fn get_field(&self, name: impl AsRef<str>, in1_type: Type) -> Option<MappedRwLockReadGuard<(Option<String>, Option<usize>, Box<dyn SslUnaryOp>)>> {
+    pub fn get_field(&self, name: impl AsRef<str>, in1_type: Type) -> Option<MappedRwLockReadGuard<(Option<String>, Option<usize>, Box<dyn SslField>)>> {
         self.get_item(&|inner| {
             inner.field.get(&(name.as_ref().to_string(), in1_type.clone()))
         })
@@ -401,7 +401,7 @@ struct EnvironmentInner {
     /// Map from registered constants to (wgsl_name, value)
     consts: HashMap<String, (Option<String>, Lit)>,
     /// Map from (field_name, type) to (wgsl_name, wgsl_index_opt, get_field)
-    field: HashMap<(String, Type), (Option<String>, Option<usize>, Box<dyn SslUnaryOp>)>,
+    field: HashMap<(String, Type), (Option<String>, Option<usize>, Box<dyn SslField>)>,
     /// List of registered types, (name, type_id, wgsl_name)
     types: Vec<(String, TypeId, Option<String>)>,
 }
@@ -559,6 +559,61 @@ impl<P1: SslType, P2: SslType, Out: SslType, F: SslCallable<(P1, P2), Out> + 'st
 
     fn output(&self, env: &Environment) -> Type {
         Out::ssl_type(env)
+    }
+}
+
+// Field -------------------------
+pub trait SslField: 'static + Send + Sync {
+    fn get(&self, var: Lit, env: &Environment) -> Lit;
+
+    fn set(&self, var: Lit, value: Lit, env: &Environment) -> Lit;
+
+    fn output(&self, env: &Environment) -> Type;
+}
+
+impl Debug for dyn SslField {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<Field>")
+    }
+}
+
+trait IntoSslField<Var, Value>: 'static + Send + Sync {
+    type Function: SslField;
+
+    fn into_callable_function(self) -> Self::Function;
+}
+
+impl<Var: SslType, Value: SslType, F_get, F_set> IntoSslField<Var, Value> for (F_get, F_set) where
+    F_get: SslCallable<(Var,), Value> + 'static + Send + Sync,
+    F_set: SslCallable<(Var, Value), Var> + 'static + Send + Sync
+{
+    type Function = (SslCallableFnObj<F_get, (Var,), Value>, SslCallableFnObj<F_set, (Var, Value), Var>);
+
+    fn into_callable_function(self) -> Self::Function {
+        (SslCallableFnObj {
+            f: self.0,
+            params: Default::default(),
+        }, SslCallableFnObj {
+            f: self.1,
+            params: Default::default(),
+        }, )
+    }
+}
+
+impl<Var: SslType, Value: SslType, F_get, F_set> SslField for (SslCallableFnObj<F_get, (Var,), Value>, SslCallableFnObj<F_set, (Var, Value), Var>) where
+    F_get: SslCallable<(Var,), Value> + 'static + Send + Sync,
+    F_set: SslCallable<(Var, Value), Var> + 'static + Send + Sync
+{
+    fn get(&self, var: Lit, env: &Environment) -> Lit {
+        self.0.f.call(&vec![var], env)
+    }
+
+    fn set(&self, var: Lit, value: Lit, env: &Environment) -> Lit {
+        self.1.f.call(&vec![var, value], env)
+    }
+
+    fn output(&self, env: &Environment) -> Type {
+        Value::ssl_type(env)
     }
 }
 

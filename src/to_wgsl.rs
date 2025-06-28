@@ -145,7 +145,8 @@ impl ToWgsl for Block {
 impl ToWgsl for Stmt {
     fn to_wgsl_rec(&self, ident_scope: &mut Vec<(String, String)>, tabs: usize, defs: &mut WgslDefinitions, env: &Environment) -> AnyResult<String> {
         match self {
-            Stmt::Declare(Binding(var_name, ty), expr) => {
+            Stmt::Declare(lvalue, expr) => {
+                let Binding(var_name, ty) = lvalue.get_binding();
                 ident_scope.push((var_name.clone(), var_name.clone()));
                 Ok(format!(
                     "var {}: {} = {};\n",
@@ -269,8 +270,8 @@ mod tests {
         let env = Environment::new();
         let script = r#"{
             let a = (1.0, 2.0);
-            let b = (1.0, (1 + 3, -.1 + 8), 3 * mat4x4(X, Z, Y, W));
-            let c = (1.0, vec4(1, 3, 2, 1) / 8, 3.0, 4.0);
+            let b = (a.0, (1 + 3, -.1 + 8), 3 * mat4x4(X, Z, Y, W));
+            let c = (1.0, vec4(1, 3, 2, (b.1).1) / 8, 3.0, 4.0);
             b.1
         }"#;
 

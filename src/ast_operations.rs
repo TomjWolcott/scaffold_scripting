@@ -64,10 +64,11 @@ impl AssignTypes for Block {
 impl AssignTypes for Stmt {
     fn assign_types_rec(&mut self, scope: &mut Scope<Type>, env: &Environment) -> AnyResult<Type> {
         match self {
-            Stmt::Declare(Binding(var, ty), expr) => {
+            Stmt::Declare(lvalue, expr) => {
+                let Binding(var, ty) = lvalue.get_binding_mut();
                 let new_ty = expr.assign_types_rec(scope, env)?;
                 scope.push(var.clone(), new_ty.clone());
-                println!("Decl | ty: {ty}, expr: {new_ty}");
+
                 *ty = new_ty;
             }
             Stmt::Assign(_, expr) => {
@@ -170,16 +171,18 @@ impl AssignTypes for Expr {
                 Ok(Type::Tuple(elements.iter_mut().map(|expr| expr.assign_types_rec(scope, env)).collect::<AnyResult<Vec<_>>>()?))
             },
             Expr::Var(var, ty) => {
-                if let Some(value) = scope.get(&var) {
-                    return Ok(value.clone());
-                }
+                let new_ty = if let Some(value) = scope.get(&var) {
+                    value.clone()
+                } else {
+                    let (_, value) = &*env.get_const(&var)
+                        .ok_or(anyhow!("var {var} not found in scope"))?;
 
-                let (_, value) = &*env.get_const(&var)
-                    .ok_or(anyhow!("var {var} not found in scope"))?;
+                    value.get_type()
+                };
 
-                *ty = value.get_type();
+                *ty = new_ty.clone();
 
-                Ok(value.get_type())
+                Ok(new_ty)
             },
             Expr::Lit(lit) => Ok(lit.get_type()),
             Expr::Block(block) => block.assign_types_rec(scope, env),
@@ -233,14 +236,16 @@ impl AlphaConvert for Block {
 impl AlphaConvert for Stmt {
     fn alpha_convert(&mut self, scope: &mut IdentScope) {
         match self {
-            Stmt::Declare(Binding(var, _), expr) => {
+            Stmt::Declare(lvalue, expr) => {
+                let Binding(var, ty) = lvalue.get_binding_mut();
                 expr.alpha_convert(&mut scope.clone());
                 let new_var = gen_ident(&var);
                 scope.push(var.clone(), new_var.clone());
 
                 *var = new_var;
             }
-            Stmt::Assign(var, expr) => {
+            Stmt::Assign(lvalue, expr) => {
+                let var = lvalue.get_var_name_mut();
                 expr.alpha_convert(&mut scope.clone());
 
                 if let Some(new_var) = scope.get(&var) {
@@ -324,7 +329,7 @@ impl Block {
         if let Some(expr) = self.1.take() {
             let ty = expr.eval_type(env)?;
             let return_expr = gen_ident("return_expr");
-            self.0.push(Stmt::Declare(Binding(return_expr.clone(), ty.clone()), expr));
+            self.0.push(Stmt::Declare(LvalueDeclare::Binding(Binding(return_expr.clone(), ty.clone())), expr));
 
             self.1 = Some(Expr::Var(return_expr, ty))
         }
@@ -364,7 +369,7 @@ impl Block {
 
                 for (Block(mut stmts, expr_opt), new_var) in blocks.into_iter().rev() {
                     if let Some(expr) = expr_opt {
-                        stmts.push(Stmt::Declare(Binding(new_var, Type::Auto), expr));
+                        stmts.push(Stmt::Declare(LvalueDeclare::Binding(Binding(new_var, Type::Auto)), expr));
                     }
 
                     promoted_stmts.append(&mut stmts);
@@ -420,11 +425,11 @@ impl Block {
         let _: Result<(), ()> = self.walk_tree_mut(&mut |node| {
             match &node {
                 TreeNodeMut::Stmt(stmt) => match stmt {
-                    Stmt::Declare(Binding(var_name, _), _) => {
-                        deletable_vars.push((var_name.clone(), 0));
+                    Stmt::Declare(lvalue, _) => {
+                        deletable_vars.push((lvalue.get_binding().0.clone(), 0));
                     }
-                    Stmt::Assign(var_name, _) => {
-                        deletable_vars.retain(|(other_var_name, _)| var_name != other_var_name)
+                    Stmt::Assign(lvalue, _) => {
+                        deletable_vars.retain(|(other_var_name, _)| lvalue.get_var_name() != other_var_name)
                     }
                     _ => {}
                 }
@@ -454,12 +459,13 @@ impl Block {
         }, &mut |node| {
             match node {
                 TreeNodeMut::Stmt(stmt) => match stmt {
-                    Stmt::Declare(Binding(var_name, _), _) => {
+                    Stmt::Declare(lvalue, _) => {
+                        let Binding(var_name, _) = lvalue.get_binding_mut();
                         if deletable_vars.contains(&(var_name.clone(), 0)) {
                             *stmt = Stmt::Noop
                         } else if deletable_vars.contains(&(var_name.clone(), 1)) {
                             let Stmt::Declare(
-                                Binding(var_name, _),
+                                LvalueDeclare::Binding(Binding(var_name, _)),
                                 expr
                             ) = std::mem::replace(stmt, Stmt::Noop) else { unreachable!() };
                             var_replacements.push((var_name, expr))
