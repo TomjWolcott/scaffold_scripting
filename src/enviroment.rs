@@ -365,11 +365,17 @@ impl Environment {
         );
     }
 
+    /// Inserts a signature, but these MUST be removed and cannot be gotten by get_fn
     pub(crate) fn insert_signature(&mut self, function: &Function) {
         self.inner_mut().functions.insert(
             (function.name.clone(), function.inputs.iter().map(|Binding(_, ty)| ty.clone()).collect()),
             EnvironmentFunction::SignatureOnly(function.output.clone())
         );
+    }
+
+    pub(crate) fn remove_signatures(&mut self) {
+        self.inner_mut().functions
+            .retain(|_, f| !matches!(f, EnvironmentFunction::SignatureOnly(_)));
     }
 
     pub fn get_fn(&self, sym: impl AsRef<str>, ins: Vec<Type>) -> Option<MappedRwLockReadGuard<EnvironmentFunction>> {

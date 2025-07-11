@@ -205,22 +205,29 @@ impl ToWgsl for Stmt {
 
 impl ToWgsl for Expr {
     fn to_wgsl_rec(&self, ident_scope: &mut Vec<(String, String)>, tabs: usize, defs: &mut WgslDefinitions, env: &Environment) -> AnyResult<String> {
+        self.0.to_wgsl_rec(ident_scope, tabs, defs, env).context(self.span())
+    }
+}
+
+impl ToWgsl for ExprInner {
+    fn to_wgsl_rec(&self, ident_scope: &mut Vec<(String, String)>, tabs: usize, defs: &mut WgslDefinitions, env: &Environment) -> AnyResult<String> {
+
         match self {
-            Expr::BinExpr(expr1, op, expr2) => {
+            ExprInner::BinExpr(expr1, op, expr2) => {
                 Ok(format!("({} {op} {})", expr1.to_wgsl_rec(ident_scope, tabs, defs, env)?, expr2.to_wgsl_rec(ident_scope, tabs, defs, env)?))
             }
-            Expr::UnaryExpr(op, expr) => {
+            ExprInner::UnaryExpr(op, expr) => {
                 Ok(format!("({op}{})", expr.to_wgsl_rec(ident_scope, tabs, defs, env)?))
             }
-            Expr::Application(fn_name, args) => {
+            ExprInner::Application(fn_name, args) => {
                 let args = args.iter()
                     .map(|arg| arg.to_wgsl_rec(ident_scope, tabs, defs, env))
                     .collect::<AnyResult<Vec<String>>>()?;
 
                 Ok(format!("{}({})", fn_name, args.join(", ")))
             }
-            Expr::Dot(_, _, _) => Err(anyhow!("I'm not supporting dot expressions yet")),
-            Expr::Field(expr, field) => {
+            ExprInner::Dot(_, _, _) => Err(anyhow!("I'm not supporting dot expressions yet")),
+            ExprInner::Field(expr, field) => {
                 let ty = expr.eval_type(env)?;
                 let (_, wgsl_index, _) = &*env.get_field(field, ty.clone())
                     .ok_or(anyhow!("Couldn't find field {} on type {}", field, ty))?;
@@ -233,32 +240,32 @@ impl ToWgsl for Expr {
                     Ok(format!("{}.{}", var, field))
                 }
             }
-            Expr::TupleAccess(expr, index) => {
+            ExprInner::TupleAccess(expr, index) => {
                 Ok(format!("{}.item{}", expr.to_wgsl_rec(ident_scope, tabs, defs, env)?, index))
             },
-            Expr::Tuple(exprs) => {
+            ExprInner::Tuple(exprs) => {
                 let items = exprs.iter()
                     .map(|item| Ok(item.to_wgsl_rec(ident_scope, tabs, defs, env)?))
                     .collect::<AnyResult<Vec<String>>>()?;
 
-                let ty: Type = Expr::Tuple(exprs.clone()).eval_type(env)?;
+                let ty: Type = ExprInner::Tuple(exprs.clone()).eval_type(env)?;
                 let Type::Tuple(tuple_type) = ty.clone() else { unreachable!() };
 
                 defs.add_tuple_type(tuple_type);
 
                 Ok(format!("{}({})", env.get_wgsl_name(&ty).unwrap(), items.join(", ")))
             },
-            Expr::Var(var_name, _) => {
+            ExprInner::Var(var_name, _) => {
                 if let Some((_, ident)) = ident_scope.iter().rev().find(|(name, _)| name == var_name) {
                     Ok(ident.clone())
                 } else {
                     Ok(var_name.clone())
                 }
             }
-            Expr::Lit(lit) => {
+            ExprInner::Lit(lit) => {
                 lit.to_wgsl_rec(ident_scope, tabs, defs, env)
             }
-            Expr::Block(_) => Err(anyhow!("Block expressions are not supported in WGSL")),
+            ExprInner::Block(_) => Err(anyhow!("Block expressions are not supported in WGSL")),
         }
     }
 }
@@ -281,7 +288,7 @@ impl ToWgsl for Lit {
                     .map(|item| Ok(item.to_wgsl_rec(ident_scope, tabs, defs, env)?))
                     .collect::<AnyResult<Vec<String>>>()?;
 
-                let ty: Type = Expr::Lit(Lit::Tuple(lits.clone())).eval_type(env)?;
+                let ty: Type = ExprInner::Lit(Lit::Tuple(lits.clone())).eval_type(env)?;
                 let Type::Tuple(tuple_type) = ty.clone() else { unreachable!() };
                 defs.add_tuple_type(tuple_type);
 
@@ -322,7 +329,7 @@ mod tests {
         let env = Environment::new();
         let script = r#"{
             let (a, d) = (1.0, 2.0);
-            let b = (a, (1 + 3, -.1 + 8), 3 * mat4x4(X, Z, Y, W));
+            let b = (a, (1 + 3, -.1 + txcfgv), 3 * mat4x4(X, Z, Y, W));
             b.1.1 = 2.43;
             let c = (1.0, vec4(1, 3, 2, b.1.1) / 8, 3.0, 4.0);
             b

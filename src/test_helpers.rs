@@ -70,7 +70,7 @@ pub fn get_test_stuff(opt1: usize, opt2: usize) -> (Environment, Document, Struc
         _ => ""
     }.to_string();
 
-    let document = parse_document(&doc_str, &env).unwrap();
+    let document = parse_document(&doc_str, None, &env).unwrap();
 
     let structure_str = match opt2 {
         0 => r#"

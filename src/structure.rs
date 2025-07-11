@@ -6,7 +6,7 @@ use lazy_static::lazy_static;
 use ron::Map;
 use regex::Regex;
 use crate::enviroment::Environment;
-use crate::parser::{Expr, Lit, parse_expr, ParseError};
+use crate::parser::{Expr, Lit, parse_expr, ParseError, ExprInner};
 use crate::utils::GetOnMap;
 
 #[derive(Debug)]
@@ -94,13 +94,13 @@ pub enum Field {
 impl TryFromRonValue for Field {
     fn try_from_ron_value(value: Value, env: &Environment) -> ron::Result<Self, FromRonError> {
         match value {
-            Value::Number(num) => Ok(Self::Expr(Expr::Lit(Lit::F32(num.into_f64() as f32)))),
-            Value::Bool(b) => Ok(Self::Expr(Expr::Lit(Lit::Bool(b)))),
+            Value::Number(num) => Ok(Self::Expr(ExprInner::Lit(Lit::F32(num.into_f64() as f32)).into())),
+            Value::Bool(b) => Ok(Self::Expr(ExprInner::Lit(Lit::Bool(b)).into())),
             Value::Seq(v) => {
                 if let Ok(mat4) = Mat4::try_from_ron_value(Value::Seq(v.clone()), env) {
-                    Ok(Self::Expr(Expr::Lit(Lit::Mat4x4(mat4))))
+                    Ok(Self::Expr(ExprInner::Lit(Lit::Mat4x4(mat4)).into()))
                 } else if let Ok(vec4) = Vec4::try_from_ron_value(Value::Seq(v.clone()), env) {
-                    Ok(Self::Expr(Expr::Lit(Lit::Vec4(vec4))))
+                    Ok(Self::Expr(ExprInner::Lit(Lit::Vec4(vec4)).into()))
                 } else {
                     Err(FromRonError::BadSeq(v))
                 }

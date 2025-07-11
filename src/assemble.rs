@@ -1,6 +1,6 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use crate::parser::{Binding, Bound, Document, Expr, Instance, KeyVal, Lit, LvalueDeclare, Method, MethodKey, Stmt, Type, Value as ParseValue};
+use crate::parser::{Binding, Bound, Document, Expr, ExprInner, Instance, KeyVal, Lit, LvalueDeclare, Method, MethodKey, Stmt, Type, Value as ParseValue};
 use crate::structure::{Field, Structure, TryFromRonValue};
 use crate::tree_walk::{TreeNodeMut, WalkTreeMut};
 
@@ -25,11 +25,11 @@ impl Structure {
     fn create_instance(&self, instance: &Instance) -> Structure {
         let fields = instance.key_vals.iter().map(|KeyVal { key, value }| {
             (key.clone(), match value {
-                ParseValue::Expr(Expr::Var(var_name, _)) => {
+                ParseValue::Expr(Expr(ExprInner::Var(var_name, _), _)) => {
                     if let Some(Field::Structure(structure)) = self.get_field(var_name) {
                         Field::Structure(structure.clone())
                     } else {
-                        Field::Expr(Expr::Var(var_name.clone(), Type::Auto))
+                        Field::Expr(ExprInner::Var(var_name.clone(), Type::Auto).into())
                     }
                 },
                 ParseValue::Expr(expr) => Field::Expr(expr.clone()),
@@ -99,25 +99,25 @@ impl Structure {
 
         // Traverses in search of __fieldName__.__methodName__(...) to replace with the method
         method.body.walk_tree_mut(&mut |node| {
-            let TreeNodeMut::Expr(expr) = node else { return Ok::<(), anyhow::Error>(()) };
+            let TreeNodeMut::Expr(Expr(expr, span)) = node else { return Ok::<(), anyhow::Error>(()) };
             match expr {
-                Expr::Var(var, _) => {
+                ExprInner::Var(var, _) => {
                     if self.get_field(&var).is_some() || var.starts_with("__") {
                         *var = format!("{id}{var}");
                     }
 
                     Ok(())
                 },
-                Expr::Dot(field_name, method_name, args) => {
+                ExprInner::Dot(field_name, method_name, args) => {
                     let bound = &bounds.iter()
                         .find(|Bound { name, .. }| field_name == name)
-                        .with_context(|| format!("Couldn't find used method {method_name} in method bounds {bounds:?} used in {method_key} in {}", &self.name))?;
+                        .with_context(|| format!("{}Couldn't find used method {method_name} in method bounds {bounds:?} used in {method_key} in {}", span.context(), &self.name))?;
 
                     let interface = bound.get_interface_with_method(document, &method_name)
-                        .with_context(|| format!("Couldn't get interface with method {method_name:?} using bound {bound} used in {method_key} in {}", &self.name))?;
+                        .with_context(|| format!("{}Couldn't get interface with method {method_name:?} using bound {bound} used in {method_key} in {}", span.context(), &self.name))?;
 
                     let Some(Field::Structure(structure)) = self.get_field(&field_name) else {
-                        return Err(anyhow!("Couldn't find field {field_name} used in {method_key} in {} -OR- The field is not a structure", &self.name))
+                        return Err(anyhow!("{} Couldn't find field {field_name} used in {method_key} in {} -OR- The field is not a structure", span.context(), &self.name))
                     };
 
                     let Method { mut body, inputs, .. } = structure.assemble_method_rec(
@@ -128,7 +128,7 @@ impl Structure {
                         body.0.insert(0, Stmt::Declare(LvalueDeclare::Binding(binding), arg.clone()));
                     }
 
-                    *expr = Expr::Block(Box::new(body));
+                    *expr = ExprInner::Block(Box::new(body)).into();
 
                     Ok(())
                 },

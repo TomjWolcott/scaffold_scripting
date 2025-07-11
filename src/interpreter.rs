@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Display};
 use glam::{Mat4, Vec4};
 use crate::assemble::AssembledStructure;
-use crate::parser::{Binding, Block, Expr, Lit, Lvalue, LvalueDeclare, LvalueField, Stmt, Type};
+use crate::parser::{Binding, Block, Expr, ExprInner, Lit, Lvalue, LvalueDeclare, LvalueField, Stmt, Type};
 use anyhow::{anyhow, Context, Result as AnyResult};
 use once_cell::sync::Lazy;
 use crate::enviroment::{Environment, SslType};
@@ -312,8 +312,18 @@ impl LvalueField {
 
 impl Eval for Expr {
     fn eval(&self, scope: &mut Scope<Lit>, env: &Environment) -> AnyResult<Lit> {
+        self.0.eval(scope, env).context(self.span())
+    }
+
+    fn eval_type(&self, env: &Environment) -> AnyResult<Type> {
+        self.0.eval_type(env).context(self.span())
+    }
+}
+
+impl Eval for ExprInner {
+    fn eval(&self, scope: &mut Scope<Lit>, env: &Environment) -> AnyResult<Lit> {
         match self {
-            Expr::BinExpr(left, symbol, right) => {
+            ExprInner::BinExpr(left, symbol, right) => {
                 let (left, sym, right) = (left.eval(scope, env)?, symbol.as_str(), right.eval(scope, env)?);
 
                 if sym == "==" {
@@ -330,7 +340,7 @@ impl Eval for Expr {
 
                 Ok(op.call((left, right), env))
             }
-            Expr::UnaryExpr(symbol, right) => {
+            ExprInner::UnaryExpr(symbol, right) => {
                 let (sym, right) = (symbol.as_str(), right.eval(scope, env)?);
 
                 let (_, op) = &*env.get_unary_op(sym, right.get_type())
@@ -341,7 +351,7 @@ impl Eval for Expr {
 
                 Ok(op.call(right, env))
             }
-            Expr::Application(fn_name, args) => {
+            ExprInner::Application(fn_name, args) => {
                 let (input_types, inputs) = args.iter()
                     .map(|arg| arg.eval(scope, env).map(|input| (input.get_type(), input)))
                     .collect::<AnyResult<(Vec<_>, Vec<_>)>>()?;
@@ -364,8 +374,8 @@ impl Eval for Expr {
 
                 Ok(function.call(&inputs, env))
             },
-            Expr::Dot(_, _, _) => Err(anyhow!("EVAL NOT SUPPORTED FOR DOT")),
-            Expr::Field(expr, field_name) => {
+            ExprInner::Dot(_, _, _) => Err(anyhow!("EVAL NOT SUPPORTED FOR DOT")),
+            ExprInner::Field(expr, field_name) => {
                 let value = expr.eval(scope, env)?;
                 let ty = value.get_type();
 
@@ -374,7 +384,7 @@ impl Eval for Expr {
 
                 Ok(field.get(value, env))
             }
-            Expr::TupleAccess(expr, index) => match expr.eval(scope, env)? {
+            ExprInner::TupleAccess(expr, index) => match expr.eval(scope, env)? {
                 Lit::Tuple(fields) => {
                     let index = *index as usize;
                     if index < fields.len() {
@@ -385,10 +395,10 @@ impl Eval for Expr {
                 },
                 lit => Err(anyhow!("Tuple access not supported for {}", lit.get_type()))
             }
-            Expr::Tuple(elements) => {
+            ExprInner::Tuple(elements) => {
                 Ok(Lit::Tuple(elements.iter().map(|expr| expr.eval(scope, env)).collect::<AnyResult<Vec<_>>>()?))
             },
-            Expr::Var(var, _) => {
+            ExprInner::Var(var, _) => {
                 if let Some(value) = scope.get(var) {
                     return Ok(value.clone());
                 }
@@ -398,14 +408,14 @@ impl Eval for Expr {
 
                 Ok(value.clone())
             },
-            Expr::Lit(lit) => Ok(lit.clone()),
-            Expr::Block(block) => block.eval(scope, env)
+            ExprInner::Lit(lit) => Ok(lit.clone()),
+            ExprInner::Block(block) => block.eval(scope, env)
         }
     }
 
     fn eval_type(&self, env: &Environment) -> AnyResult<Type> {
         match self {
-            Expr::BinExpr(left, symbol, right) => {
+            ExprInner::BinExpr(left, symbol, right) => {
                 let (left, sym, right) = (left.eval_type(env)?, symbol.as_str(), right.eval_type(env)?);
 
                 if sym == "==" || sym == "!=" {
@@ -420,7 +430,7 @@ impl Eval for Expr {
 
                 Ok(op.output(env))
             }
-            Expr::UnaryExpr(symbol, right) => {
+            ExprInner::UnaryExpr(symbol, right) => {
                 let (sym, right) = (symbol.as_str(), right.eval_type(env)?);
 
                 let (_, op) = &*env.get_unary_op(sym, right.clone())
@@ -431,7 +441,7 @@ impl Eval for Expr {
 
                 Ok(op.output(env))
             }
-            Expr::Application(fn_name, args) => {
+            ExprInner::Application(fn_name, args) => {
                 let (input_types) = args.iter()
                     .map(|arg| arg.eval_type(env))
                     .collect::<AnyResult<Vec<_>>>()?;
@@ -452,8 +462,8 @@ impl Eval for Expr {
 
                 Ok(function.output(env))
             },
-            Expr::Dot(_, _, _) => Err(anyhow!("EVAL NOT SUPPORTED FOR DOT")),
-            Expr::Field(expr, field_name) => {
+            ExprInner::Dot(_, _, _) => Err(anyhow!("EVAL NOT SUPPORTED FOR DOT")),
+            ExprInner::Field(expr, field_name) => {
                 let ty = expr.eval_type(env)?;
 
                 let (_, _, get_field) = &*env.get_field(field_name, ty.clone())
@@ -461,7 +471,7 @@ impl Eval for Expr {
 
                 Ok(get_field.output(env))
             }
-            Expr::TupleAccess(expr, index) => match expr.eval_type(env)? {
+            ExprInner::TupleAccess(expr, index) => match expr.eval_type(env)? {
                 Type::Tuple(fields) => {
                     let index = *index as usize;
                     if index < fields.len() {
@@ -472,10 +482,10 @@ impl Eval for Expr {
                 },
                 ty => Err(anyhow!("Tuple access not supported for {}", ty))
             }
-            Expr::Tuple(elements) => {
+            ExprInner::Tuple(elements) => {
                 Ok(Type::Tuple(elements.iter().map(|expr| expr.eval_type(env)).collect::<AnyResult<Vec<_>>>()?))
             },
-            Expr::Var(name, ty) => {
+            ExprInner::Var(name, ty) => {
                 if *ty == Type::Auto {
                     Err(anyhow!("Type::Auto found on {name}.  eval_type must be run after assign_types to get rid of all instances of Type::Auto"))
                 } else {
@@ -483,8 +493,8 @@ impl Eval for Expr {
                 }
 
             },
-            Expr::Lit(lit) => Ok(lit.get_type()),
-            Expr::Block(block) => block.eval_type(env),
+            ExprInner::Lit(lit) => Ok(lit.get_type()),
+            ExprInner::Block(block) => block.eval_type(env),
         }
     }
 }
@@ -528,7 +538,7 @@ mod tests {
 
                 x
             }
-        "#, &env).unwrap();
+        "#, None, &env).unwrap();
 
         document.add_to_environment(&mut env).unwrap();
 

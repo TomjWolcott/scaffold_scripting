@@ -54,32 +54,32 @@ impl<E> WalkTreeMut<E> for Expr {
     fn walk_tree_mut_with_options(&mut self, options: Options, func: &mut impl for<'a> FnMut(TreeNodeMut<'a>) -> Result<(), E>) -> Result<(), E> {
         if RecOrdering::Preorder == options.ordering { func(TreeNodeMut::Expr(self))? };
 
-        match self {
-            Expr::BinExpr(lhs, _, rhs) => {
+        match &mut **self {
+            ExprInner::BinExpr(lhs, _, rhs) => {
                 lhs.walk_tree_mut_with_options(options, func)?;
                 rhs.walk_tree_mut_with_options(options, func)?;
             },
-            Expr::UnaryExpr(_, expr) => expr.walk_tree_mut_with_options(options, func)?,
-            Expr::Application(_, args) => {
+            ExprInner::UnaryExpr(_, expr) => expr.walk_tree_mut_with_options(options, func)?,
+            ExprInner::Application(_, args) => {
                 for arg in args.iter_mut() {
                     arg.walk_tree_mut_with_options(options, func)?;
                 }
             },
-            Expr::Dot(_, _, args) => {
+            ExprInner::Dot(_, _, args) => {
                 for arg in args.iter_mut() {
                     arg.walk_tree_mut_with_options(options, func)?;
                 }
             },
-            Expr::Field(expr, _) => expr.walk_tree_mut_with_options(options, func)?,
-            Expr::TupleAccess(expr, _) => expr.walk_tree_mut_with_options(options, func)?,
-            Expr::Tuple(elements) => {
+            ExprInner::Field(expr, _) => expr.walk_tree_mut_with_options(options, func)?,
+            ExprInner::TupleAccess(expr, _) => expr.walk_tree_mut_with_options(options, func)?,
+            ExprInner::Tuple(elements) => {
                 for element in elements.iter_mut() {
                     element.walk_tree_mut_with_options(options, func)?;
                 }
             }
-            Expr::Var(_, _) => {},
-            Expr::Lit(_) => {},
-            Expr::Block(block) => block.walk_tree_mut_with_options(options, func)?
+            ExprInner::Var(_, _) => {},
+            ExprInner::Lit(_) => {},
+            ExprInner::Block(block) => block.walk_tree_mut_with_options(options, func)?
         }
 
         if RecOrdering::Postorder == options.ordering { func(TreeNodeMut::Expr(self))? };
@@ -169,7 +169,7 @@ fn walker() {
 
     let env = Environment::new();
 
-    let mut document = parse_document(&doc_str, &env).unwrap();
+    let mut document = parse_document(&doc_str, None, &env).unwrap();
 
     let method = document.get_method_mut("Plane4D", &MethodKey::new(Some("Proj"), "proj")).unwrap();
 

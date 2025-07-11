@@ -100,8 +100,14 @@ impl AssignTypes for Stmt {
 
 impl AssignTypes for Expr {
     fn assign_types_rec(&mut self, scope: &mut Scope<Type>, env: &Environment) -> AnyResult<Type> {
+        self.0.assign_types_rec(scope, env).context(self.span())
+    }
+}
+
+impl AssignTypes for ExprInner {
+    fn assign_types_rec(&mut self, scope: &mut Scope<Type>, env: &Environment) -> AnyResult<Type> {
         match self {
-            Expr::BinExpr(left, symbol, right) => {
+            ExprInner::BinExpr(left, symbol, right) => {
                 let (left, sym, right) = (left.assign_types_rec(scope, env)?, symbol.as_str(), right.assign_types_rec(scope, env)?);
 
                 if sym == "==" || sym == "!=" {
@@ -116,7 +122,7 @@ impl AssignTypes for Expr {
 
                 Ok(op.output(env))
             }
-            Expr::UnaryExpr(symbol, right) => {
+            ExprInner::UnaryExpr(symbol, right) => {
                 let (sym, right) = (symbol.as_str(), right.assign_types_rec(scope, env)?);
 
                 let (_, op) = &*env.get_unary_op(sym, right.clone())
@@ -127,7 +133,7 @@ impl AssignTypes for Expr {
 
                 Ok(op.output(env))
             }
-            Expr::Application(fn_name, args) => {
+            ExprInner::Application(fn_name, args) => {
                 let (input_types) = args.iter_mut()
                     .map(|arg| arg.assign_types_rec(scope, env))
                     .collect::<AnyResult<Vec<_>>>()?;
@@ -148,8 +154,8 @@ impl AssignTypes for Expr {
 
                 Ok(func.output(env))
             },
-            Expr::Dot(_, _, _) => Err(anyhow!("EVAL NOT SUPPORTED FOR DOT")),
-            Expr::Field(expr, field_name) => {
+            ExprInner::Dot(_, _, _) => Err(anyhow!("EVAL NOT SUPPORTED FOR DOT")),
+            ExprInner::Field(expr, field_name) => {
                 let ty = expr.assign_types_rec(scope, env)?;
 
                 let (_, _, get_field) = &*env.get_field(&field_name, ty.clone())
@@ -157,7 +163,7 @@ impl AssignTypes for Expr {
 
                 Ok(get_field.output(env))
             }
-            Expr::TupleAccess(expr, index) => match expr.assign_types_rec(scope, env)? {
+            ExprInner::TupleAccess(expr, index) => match expr.assign_types_rec(scope, env)? {
                 Type::Tuple(fields) => {
                     let index = *index as usize;
                     if index < fields.len() {
@@ -168,10 +174,10 @@ impl AssignTypes for Expr {
                 },
                 ty => Err(anyhow!("Tuple access not supported for {}", ty))
             }
-            Expr::Tuple(elements) => {
+            ExprInner::Tuple(elements) => {
                 Ok(Type::Tuple(elements.iter_mut().map(|expr| expr.assign_types_rec(scope, env)).collect::<AnyResult<Vec<_>>>()?))
             },
-            Expr::Var(var, ty) => {
+            ExprInner::Var(var, ty) => {
                 let new_ty = if let Some(value) = scope.get(&var) {
                     value.clone()
                 } else {
@@ -185,8 +191,8 @@ impl AssignTypes for Expr {
 
                 Ok(new_ty)
             },
-            Expr::Lit(lit) => Ok(lit.get_type()),
-            Expr::Block(block) => block.assign_types_rec(scope, env),
+            ExprInner::Lit(lit) => Ok(lit.get_type()),
+            ExprInner::Block(block) => block.assign_types_rec(scope, env),
         }
     }
 }
@@ -276,20 +282,21 @@ impl AlphaConvert for Stmt {
 
 impl AlphaConvert for Expr {
     fn alpha_convert(&mut self, scope: &mut IdentScope) {
-        match self {
-            Expr::BinExpr(expr1, _, expr2) => {
+        let span = self.span().clone();
+        match &mut **self {
+            ExprInner::BinExpr(expr1, _, expr2) => {
                 expr1.alpha_convert(&mut scope.clone());
                 expr2.alpha_convert(&mut scope.clone());
             }
-            Expr::UnaryExpr(_, expr) => {
+            ExprInner::UnaryExpr(_, expr) => {
                 expr.alpha_convert(&mut scope.clone());
             }
-            Expr::Application(_, exprs) => {
+            ExprInner::Application(_, exprs) => {
                 for expr in exprs.iter_mut() {
                     expr.alpha_convert(&mut scope.clone());
                 }
             }
-            Expr::Dot(var, _, exprs) => {
+            ExprInner::Dot(var, _, exprs) => {
                 if let Some(new_var) = scope.get(&var) {
                     *var = new_var.clone();
                 }
@@ -298,24 +305,24 @@ impl AlphaConvert for Expr {
                     expr.alpha_convert(&mut scope.clone());
                 }
             }
-            Expr::Field(expr, _) => {
+            ExprInner::Field(expr, _) => {
                 expr.alpha_convert(&mut scope.clone());
             }
-            Expr::TupleAccess(expr, _) => {
+            ExprInner::TupleAccess(expr, _) => {
                 expr.alpha_convert(&mut scope.clone());
             }
-            Expr::Tuple(exprs) => {
+            ExprInner::Tuple(exprs) => {
                 for expr in exprs.iter_mut() {
                     expr.alpha_convert(&mut scope.clone());
                 }
             }
-            Expr::Var(var, _) => {
+            ExprInner::Var(var, _) => {
                 if let Some(new_var) = scope.get(&var) {
                     *var = new_var.clone();
                 }
             }
-            Expr::Lit(_) => {}
-            Expr::Block(block) => {
+            ExprInner::Lit(_) => {}
+            ExprInner::Block(block) => {
                 block.alpha_convert(&mut scope.clone());
             }
         }
@@ -332,7 +339,7 @@ impl Block {
             let return_expr = gen_ident("return_expr");
             self.0.push(Stmt::Declare(LvalueDeclare::Binding(Binding(return_expr.clone(), ty.clone())), expr));
 
-            self.1 = Some(Expr::Var(return_expr, ty))
+            self.1 = Some(ExprInner::Var(return_expr, ty).into())
         }
 
         while i < self.0.len() {
@@ -388,29 +395,30 @@ impl Block {
 
 impl Expr {
     pub fn promote_blocks(&mut self, env: &Environment) -> AnyResult<Vec<(Block, String)>> {
-        Ok(match self {
-            Expr::BinExpr(expr1, _, expr2) => {
+        let span = self.span().clone();
+        Ok(match &mut **self {
+            ExprInner::BinExpr(expr1, _, expr2) => {
                 vec![expr1.promote_blocks(env)?, expr2.promote_blocks(env)?].into_iter().flatten().collect()
             }
-            Expr::Field(expr, _) |
-            Expr::TupleAccess(expr, _) |
-            Expr::UnaryExpr(_, expr) => {
+            ExprInner::Field(expr, _) |
+            ExprInner::TupleAccess(expr, _) |
+            ExprInner::UnaryExpr(_, expr) => {
                 expr.promote_blocks(env)?
             }
-            Expr::Tuple(exprs) |
-            Expr::Application(_, exprs) |
-            Expr::Dot(_, _, exprs) => {
+            ExprInner::Tuple(exprs) |
+            ExprInner::Application(_, exprs) |
+            ExprInner::Dot(_, _, exprs) => {
                 exprs.iter_mut().map(|expr| {
                     expr.promote_blocks(env)
                 }).collect::<AnyResult<Vec<_>>>()?.into_iter().flatten().collect()
             },
-            Expr::Var(_, _) => vec![],
-            Expr::Lit(_) => vec![],
-            Expr::Block(block) => {
+            ExprInner::Var(_, _) => vec![],
+            ExprInner::Lit(_) => vec![],
+            ExprInner::Block(block) => {
                 let ty = block.eval_type(env)?;
 
                 let new_var = gen_ident("block");
-                let Expr::Block(block) = std::mem::replace(self, Expr::Var(new_var.clone(), ty)) else { unreachable!() };
+                let Expr(ExprInner::Block(block), _) = std::mem::replace(self, ExprInner::Var(new_var.clone(), ty).into()) else { unreachable!() };
 
                 vec![(*block, new_var)]
             }
@@ -434,9 +442,9 @@ impl Block {
                     }
                     _ => {}
                 }
-                TreeNodeMut::Expr(expr) => match expr {
-                    Expr::Dot(var_name, _, _) |
-                    Expr::Var(var_name, _) => {
+                TreeNodeMut::Expr(expr) => match &***expr {
+                    ExprInner::Dot(var_name, _, _) |
+                    ExprInner::Var(var_name, _) => {
                         deletable_vars.retain_mut(|(other_var_name, num_usages)| {
                             if other_var_name == var_name {
                                 *num_usages += 1;
@@ -474,8 +482,8 @@ impl Block {
                     }
                     _ => {}
                 }
-                TreeNodeMut::Expr(expr) => match expr {
-                    Expr::Var(var_name, _) => {
+                TreeNodeMut::Expr(expr) => match &**expr {
+                    ExprInner::Var(var_name, _) => {
                         if let Some(index) = var_replacements.iter().position(
                             |(other_var_name, _)| var_name == other_var_name
                         ) {

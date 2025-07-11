@@ -10,6 +10,7 @@ mod utils;
 mod enviroment;
 mod any_value;
 mod scope;
+mod parser_span;
 
 pub mod prelude {
     pub use crate::parser::*;
