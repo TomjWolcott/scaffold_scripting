@@ -49,8 +49,8 @@ impl WgslDefinitions {
 }
 
 pub struct WgslOutput {
-    wgsl_code: String,
-    definitions: WgslDefinitions
+    pub wgsl_code: String,
+    pub definitions: WgslDefinitions
 }
 
 #[derive(Debug)]
@@ -124,6 +124,31 @@ impl ToWgsl for Method {
     }
 }
 
+impl ToWgsl for Function {
+    fn to_wgsl_rec(&self, ident_scope: &mut Vec<(String, String)>, tabs: usize, defs: &mut WgslDefinitions, env: &Environment) -> AnyResult<String> {
+        let mut inputs = Vec::new();
+
+        for Binding(name, ty) in self.inputs.iter() {
+            ident_scope.push((name.clone(), name.clone()));
+
+            inputs.push(format!(
+                "{}: {}",
+                name.clone(),
+                env.get_wgsl_name(&ty).with_context(|| format!("Could not find type {} in env", ty))?
+            ))
+        }
+
+        Ok(format!(
+            "{}fn {}({}) -> {} {}",
+            TAB.repeat(tabs),
+            self.name,
+            inputs.join(", "),
+            env.get_wgsl_name(&self.output).with_context(|| format!("Could not find type {} in env", self.output))?,
+            self.body.to_wgsl_rec(ident_scope, tabs, defs, env)?
+        ))
+    }
+}
+
 impl ToWgsl for Block {
     fn to_wgsl_rec(&self, ident_scope: &mut Vec<(String, String)>, tabs: usize, defs: &mut WgslDefinitions, env: &Environment) -> AnyResult<String> {
         let mut string = "{\n".to_string();
@@ -156,8 +181,8 @@ impl ToWgsl for Stmt {
                     expr.to_wgsl_rec(ident_scope, tabs, defs, env)?
                 ))
             }
-            Stmt::Assign(var_name, expr) => {
-                Ok(format!("{} = {};\n", var_name, expr.to_wgsl_rec(ident_scope, tabs, defs, env)?))
+            Stmt::Assign(lvalue, expr) => {
+                Ok(format!("{} = {};\n", lvalue.to_wgsl(), expr.to_wgsl_rec(ident_scope, tabs, defs, env)?))
             }
             Stmt::IfElse((if_expr, if_block), else_ifs, else_block) => {
                 Ok(format!(
@@ -251,8 +276,35 @@ impl ToWgsl for Lit {
                 Lit::Vec4(m.z_axis).to_wgsl_rec(ident_scope, tabs, defs, env)?,
                 Lit::Vec4(m.w_axis).to_wgsl_rec(ident_scope, tabs, defs, env)?,
             )),
+            Lit::Tuple(lits) => {
+                let items = lits.iter()
+                    .map(|item| Ok(item.to_wgsl_rec(ident_scope, tabs, defs, env)?))
+                    .collect::<AnyResult<Vec<String>>>()?;
+
+                let ty: Type = Expr::Lit(Lit::Tuple(lits.clone())).eval_type(env)?;
+                let Type::Tuple(tuple_type) = ty.clone() else { unreachable!() };
+                defs.add_tuple_type(tuple_type);
+
+                Ok(format!("{}({})", env.get_wgsl_name(&ty).unwrap(), items.join(", ")))
+            }
             lit => Err(anyhow!("Unsupported literal: {:?}", lit))
         }
+    }
+}
+
+impl Lvalue {
+    fn to_wgsl(&self) -> String {
+        let var_name = self.get_var_name();
+        let fields_string = if let Lvalue::Fields(_, fields) = self {
+            fields.iter().map(|field| match field {
+                LvalueField::Field(field) => format!(".{}", field),
+                LvalueField::TupleAccess(i) => format!(".item{}", i)
+            }).collect::<String>()
+        } else {
+            String::new()
+        };
+
+        format!("{var_name}{fields_string}")
     }
 }
 
@@ -269,10 +321,11 @@ mod tests {
     fn play_with_to_wgsl() {
         let env = Environment::new();
         let script = r#"{
-            let a = (1.0, 2.0);
-            let b = (a.0, (1 + 3, -.1 + 8), 3 * mat4x4(X, Z, Y, W));
-            let c = (1.0, vec4(1, 3, 2, (b.1).1) / 8, 3.0, 4.0);
-            b.1
+            let (a, d) = (1.0, 2.0);
+            let b = (a, (1 + 3, -.1 + 8), 3 * mat4x4(X, Z, Y, W));
+            b.1.1 = 2.43;
+            let c = (1.0, vec4(1, 3, 2, b.1.1) / 8, 3.0, 4.0);
+            b
         }"#;
 
         let mut block = parse_block(script, &env).unwrap();

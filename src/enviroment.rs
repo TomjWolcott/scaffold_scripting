@@ -8,8 +8,11 @@ use std::sync::{Arc};
 use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use glam::{Mat4, Vec4};
 use once_cell::sync::Lazy;
-use crate::parser::{Function, Lit, Type};
+use crate::parser::{Binding, Function, Lit, Type};
 use crate::any_value::{AnyValue, AsDynPartialEq};
+use crate::interpreter::Eval;
+use crate::prelude::{ToWgsl, ToWgslError, WgslDefinitions, WgslOutput};
+use anyhow::{Context, Result as AnyResult};
 
 #[test]
 fn test() {
@@ -101,6 +104,8 @@ static GLOBAL_ENV: Lazy<Environment> = Lazy::new(|| {
     env.register_binary_op(|m: Mat4, v: Vec4| m * v, "*".into()).unwrap();
     env.register_binary_op(|n: f32, n2: f32| n % n2, "%".into()).unwrap();
     env.register_binary_op(|v: Vec4, v2: Vec4| v % v2, "%".into()).unwrap();
+    env.register_binary_op(|v: Vec4, n: f32| v % n, "%".into()).unwrap();
+    env.register_binary_op(|n: f32, v: Vec4| n % v, "%".into()).unwrap();
 
     // boolean ops
     env.register_binary_op(|b1: bool, b2: bool| b1 && b2, "&&".into()).unwrap();
@@ -236,6 +241,40 @@ impl Environment {
         }
     }
 
+    pub fn get_wgsl_code(&self) -> AnyResult<WgslOutput> {
+        let mut wgsl_code = String::new();
+        let mut wgsl_defs = WgslDefinitions::new();
+
+        for (name, (wgsl_name, lit)) in self.inner().consts.iter().chain(GLOBAL_ENV.inner().consts.iter()) {
+            let name = wgsl_name.as_ref().unwrap_or(name);
+            let ty = self.get_wgsl_name(&lit.get_type()).context("Expected lit to have valid wgsl type name")?;
+            let lit_code = lit.to_wgsl_rec(&mut Vec::new(), 0, &mut wgsl_defs, self)?;
+
+            wgsl_code.push_str(format!("const {name}: {ty} = {};\n", lit_code).as_str());
+        }
+
+        for ((name, inputs), env_func) in self.inner().functions.iter().chain(GLOBAL_ENV.inner().functions.iter()) {
+            match env_func {
+                EnvironmentFunction::RustImpl { .. } => {},
+                EnvironmentFunction::RustWgsl { wgsl_impl, .. } => {
+                    wgsl_code.push('\n');
+                    wgsl_code.push_str(wgsl_impl.as_str());
+                    wgsl_code.push('\n');
+                }
+                EnvironmentFunction::Ssl(func) => {
+                    wgsl_code.push('\n');
+                    wgsl_code.push_str(func.to_wgsl_rec(&mut Vec::new(), 0, &mut wgsl_defs, self)?.as_str());
+                    wgsl_code.push('\n');
+                }
+                EnvironmentFunction::SignatureOnly(output) => {
+                    wgsl_code.push_str(format!("\n// FnSignature {{ name: \"{name}\", inputs: \"{inputs:?}\", output: \"{output:?}\" }}\n").as_str());
+                }
+            }
+        }
+
+        Ok(WgslOutput { wgsl_code, definitions: wgsl_defs })
+    }
+
 
     pub fn register_unary_op<In1: SslType, Out: SslType, FN: IntoSslUnaryOp<In1, Out>>(
         &mut self,
@@ -291,13 +330,49 @@ impl Environment {
 
         self.inner_mut().functions.insert(
             (name.name, input_types),
-            (name.wgsl_name, Box::new(function.into_callable_function()))
+            EnvironmentFunction::RustImpl {
+                func: Box::new(function.into_callable_function()),
+                wgsl_name: name.wgsl_name
+            }
         );
 
         Ok(())
     }
 
-    pub fn get_fn(&self, sym: impl AsRef<str>, ins: Vec<Type>) -> Option<MappedRwLockReadGuard<(Option<String>, Box<dyn SslCallableFn>)>> {
+    pub fn register_fn_with_wgsl_code<Params: FunctionParams, Out: SslType, FN: IntoSslCallableFn<Params, Out>>(
+        &mut self,
+        function: FN,
+        name: impl AsRef<str>,
+        wgsl_code: String
+    ) -> Result<(), RegisterError> {
+        let input_types = Params::input_types(self);
+
+        self.inner_mut().functions.insert(
+            (name.as_ref().to_string(), input_types),
+            EnvironmentFunction::RustWgsl {
+                func: Box::new(function.into_callable_function()),
+                wgsl_impl: wgsl_code
+            }
+        );
+
+        Ok(())
+    }
+
+    pub fn insert_ssl_fn(&mut self, function: Function) {
+        self.inner_mut().functions.insert(
+            (function.name.clone(), function.inputs.iter().map(|Binding(_, ty)| ty.clone()).collect()),
+            EnvironmentFunction::Ssl(function)
+        );
+    }
+
+    pub(crate) fn insert_signature(&mut self, function: &Function) {
+        self.inner_mut().functions.insert(
+            (function.name.clone(), function.inputs.iter().map(|Binding(_, ty)| ty.clone()).collect()),
+            EnvironmentFunction::SignatureOnly(function.output.clone())
+        );
+    }
+
+    pub fn get_fn(&self, sym: impl AsRef<str>, ins: Vec<Type>) -> Option<MappedRwLockReadGuard<EnvironmentFunction>> {
         self.get_item(&|inner| {
             inner.functions.get(&(sym.as_ref().to_string(), ins.clone()))
         })
@@ -396,8 +471,8 @@ struct EnvironmentInner {
     unary_ops: HashMap<(String, Type), (Option<String>, Box<dyn SslUnaryOp>)>,
     /// Map from registered binary ops defined by (symbol, input1, input2) to (wgsl_symbol, fn)
     binary_ops: HashMap<(String, Type, Type), (Option<String>, Box<dyn SslBinaryOp>)>,
-    /// Map from registered functions defined by (name, inputs) to (wgsl_name, fn)
-    functions: HashMap<(String, Vec<Type>), (Option<String>, Box<dyn SslCallableFn>)>,
+    /// Map from registered functions defined by (name, inputs) to env_function
+    functions: HashMap<(String, Vec<Type>), EnvironmentFunction>,
     /// Map from registered constants to (wgsl_name, value)
     consts: HashMap<String, (Option<String>, Lit)>,
     /// Map from (field_name, type) to (wgsl_name, wgsl_index_opt, get_field)
@@ -415,6 +490,54 @@ impl EnvironmentInner {
             consts: Default::default(),
             types: vec![],
             field: Default::default(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum EnvironmentFunction {
+    RustImpl {
+        func: Box<dyn SslCallableFn>,
+        wgsl_name: Option<String>
+    },
+    RustWgsl {
+        func: Box<dyn SslCallableFn>,
+        wgsl_impl: String
+    },
+    Ssl(Function),
+    SignatureOnly(Type)
+}
+
+impl EnvironmentFunction {
+    pub fn call(&self, inputs: &Vec<Lit>, env: &Environment) -> Lit {
+        match self {
+            EnvironmentFunction::RustImpl { func, .. } => func.call(inputs, env),
+            EnvironmentFunction::RustWgsl { func, .. } => func.call(inputs, env),
+            EnvironmentFunction::Ssl(ssl_function) => {
+                let mut scope = inputs.iter().zip(&ssl_function.inputs)
+                    .map(|(lit, Binding(name, _))| (name, lit)).collect::<Vec<_>>().into();
+
+                ssl_function.body.eval(&mut scope, env).unwrap()
+            }
+            EnvironmentFunction::SignatureOnly(_) => panic!("Cannot call a fn signature")
+        }
+    }
+
+    pub fn output(&self, env: &Environment) -> Type {
+        match self {
+            EnvironmentFunction::RustImpl { func, .. } => func.output(env),
+            EnvironmentFunction::RustWgsl { func, .. } => func.output(env),
+            EnvironmentFunction::Ssl(func) => func.output.clone(),
+            EnvironmentFunction::SignatureOnly(output) => output.clone()
+        }
+    }
+
+    pub fn wgsl_name(&self, ssl_name: &String) -> String {
+        match self {
+            EnvironmentFunction::RustImpl { wgsl_name, .. } => {
+                wgsl_name.as_ref().unwrap_or(ssl_name).clone()
+            }
+            _ => ssl_name.clone()
         }
     }
 }

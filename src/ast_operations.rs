@@ -7,9 +7,10 @@ use crate::scope::Scope;
 use crate::test_helpers::prettify_string;
 use crate::tree_walk::{Options, RecOrdering, TreeNodeMut, WalkTreeMut};
 
+
 pub trait AssignTypes {
-    fn assign_types(&mut self, env: &Environment) {
-        self.assign_types_rec(&mut Scope::new(), env);
+    fn assign_types(&mut self, env: &Environment) -> AnyResult<()> {
+        self.assign_types_rec(&mut Scope::new(), env).map(|_| ())
     }
 
     fn assign_types_rec(&mut self, scope: &mut Scope<Type>, env: &Environment) -> AnyResult<Type>;
@@ -139,13 +140,13 @@ impl AssignTypes for Expr {
                     };
                 }
 
-                let (_, function) = &*env.get_fn(&fn_name, input_types.clone())
+                let func = &*env.get_fn(&fn_name, input_types.clone())
                     .ok_or(anyhow!(
                         "Could not find signature {fn_name}({})",
                         input_types.iter().map(|ty| ty.to_string()).collect::<Vec<_>>().join(", ")
                     ))?;
 
-                Ok(function.output(env))
+                Ok(func.output(env))
             },
             Expr::Dot(_, _, _) => Err(anyhow!("EVAL NOT SUPPORTED FOR DOT")),
             Expr::Field(expr, field_name) => {
@@ -211,7 +212,7 @@ impl IdentScope {
     }
 }
 
-fn gen_ident(str: impl AsRef<str>) -> String {
+pub fn gen_ident(str: impl AsRef<str>) -> String {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
     format!("{}_{:05}", str.as_ref(), COUNTER.fetch_add(1, Ordering::Relaxed))

@@ -356,7 +356,7 @@ impl Eval for Expr {
                     };
                 }
 
-                let (_, function) = &*env.get_fn(fn_name, input_types.clone())
+                let function = &*env.get_fn(fn_name, input_types.clone())
                     .ok_or(anyhow!(
                         "Could not find signature {fn_name}({})",
                         inputs.iter().map(|input| format!("{}", input.get_type())).collect::<Vec<_>>().join(", ")
@@ -444,7 +444,7 @@ impl Eval for Expr {
                     };
                 }
 
-                let (_, function) = &*env.get_fn(fn_name, input_types.clone())
+                let function = &*env.get_fn(fn_name, input_types.clone())
                     .ok_or(anyhow!(
                         "Could not find signature {fn_name}({})",
                         input_types.iter().map(|ty| ty.to_string()).collect::<Vec<_>>().join(", ")
@@ -501,8 +501,52 @@ mod tests {
     use crate::assemble::AssembledStructure;
     use crate::enviroment::Environment;
     use crate::interpreter::Eval;
-    use crate::parser::parse_block;
+    use crate::parser::{parse_block, parse_document};
     use crate::test_helpers::{get_test_stuff, prettify_string};
+
+    #[test]
+    fn try_eval_fns() {
+        let mut env = Environment::new();
+        let document = parse_document(r#"
+            const H = 4 + A;
+            const (A, q) = (1, 2 + H);
+
+            fn abc(a: f32) -> (f32, vec4) {
+                let q = a * 29.0;
+
+                q = H + q;
+
+                (q + a, (q % H) * vec4(1, 2, 1 / q, 2))
+            }
+
+            fn fib(n: f32) -> f32 {
+                let x = 1;
+
+                if (n > 1) {
+                    x = n * fib(n - 1) + abc(1.0);
+                }
+
+                x
+            }
+        "#, &env).unwrap();
+
+        document.add_to_environment(&mut env).unwrap();
+
+        println!("Doc:\n{document}");
+
+        let wgsl_output = env.get_wgsl_code().unwrap();
+
+        println!("wgsl:\n{}\n// -------\n{}", wgsl_output.definitions.to_wgsl_definition_code(&env).unwrap(), wgsl_output.wgsl_code);
+
+        let block = parse_block(r#"{
+            let (a, v) = abc(4.0);
+            let q = abc(5.0);
+
+            (fib(5.0), a, q, v)
+        }"#, &env).unwrap();
+
+        println!("Eval: {:?}", block.eval_into::<(f32, f32, (f32, Vec4), Vec4)>(&env).unwrap());
+    }
 
     #[test]
     fn try_eval_block() {

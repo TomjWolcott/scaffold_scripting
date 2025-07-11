@@ -61,6 +61,12 @@ impl From<&Vec<Binding>> for Scope<Type> {
     }
 }
 
+impl<T: Display + Clone + PartialEq> From<Vec<(&String, &T)>> for Scope<T> {
+    fn from(value: Vec<(&String, &T)>) -> Self {
+        Self(value.into_iter().map(|(name, t)| (name.clone(), t.clone())).collect())
+    }
+}
+
 pub struct ScopeIterator<'a, T: Display + Clone + PartialEq> {
     scope: &'a Scope<T>,
     index: usize

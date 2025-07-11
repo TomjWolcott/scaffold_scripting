@@ -1,4 +1,4 @@
-use crate::enviroment::Environment;
+use crate::enviroment::{Environment, SslIdentifier};
 use glam::{Mat4, Vec4};
 use pest::iterators::Pair;
 use pest::Parser;
@@ -6,10 +6,13 @@ use pest_derive::Parser;
 use std::any::Any;
 use std::borrow::Borrow;
 use std::fmt::{Display, Formatter};
-use anyhow::anyhow;
 use crate::any_value::AnyValue;
+use crate::ast_operations::{gen_ident, AssignTypes};
+use crate::interpreter::Eval;
 use crate::prelude::TreeNodeMut;
-use crate::tree_walk::{Options, RecOrdering, WalkTreeMut};
+use crate::scope::Scope;
+use crate::tree_walk::{Options, WalkTreeMut};
+use anyhow::{anyhow, Context, Result as AnyResult};
 
 macro_rules! assert_rule {
     ($pair:expr, $($rule:ident)|*) => {
@@ -65,7 +68,8 @@ pub enum ParseError {
 pub struct Document {
     pub interfaces: Vec<Interface>,
     pub classes: Vec<Class>,
-    pub functions: Vec<Function>
+    pub functions: Vec<Function>,
+    pub consts: Vec<Constant>
 }
 
 pub fn parse_document(script: impl AsRef<str>, env: &Environment) -> Result<Document, ParseError> {
@@ -75,12 +79,19 @@ pub fn parse_document(script: impl AsRef<str>, env: &Environment) -> Result<Docu
     Document::parse(parsed.next().unwrap(), env)
 }
 
+#[derive(Debug, Clone)]
+pub enum DocumentItem {
+    Function(Function),
+    Constant(Constant)
+}
+
 impl Document {
     pub fn new() -> Self {
         Self {
             interfaces: Vec::new(),
             classes: Vec::new(),
-            functions: Vec::new()
+            functions: Vec::new(),
+            consts: Vec::new()
         }
     }
 
@@ -111,7 +122,8 @@ impl Document {
         let Document {
             classes: mut other_classes,
             interfaces: mut other_interfaces,
-            functions: mut other_functions
+            functions: mut other_functions,
+            consts: mut other_consts
         } = other;
 
         self.classes.retain(|Class { name, .. }| {
@@ -126,9 +138,94 @@ impl Document {
             !other_functions.iter().any(|other_function| function.get_signature() == other_function.get_signature())
         });
 
+        self.consts.retain(|constant| {
+            !other_consts.iter().any(|other_constant| constant.0 == other_constant.0)
+        });
+
         self.classes.append(&mut other_classes);
         self.interfaces.append(&mut other_interfaces);
         self.functions.append(&mut other_functions);
+        self.consts.append(&mut other_consts);
+    }
+
+    pub fn add_to_environment(&self, env: &mut Environment) -> AnyResult<()> {
+        let mut document_items = self.functions.iter()
+            .map(|f| (false, DocumentItem::Function(f.clone())))
+            .chain(self.consts.iter().map(|c| (false, DocumentItem::Constant(c.clone()))))
+            .collect::<Vec<_>>();
+
+        if document_items.len() == 0 { return Ok(()) };
+
+        let mut something_changed_last_cycle = true;
+        let mut i = 0;
+        let num_items = document_items.len();
+        let mut errs = Vec::new();
+
+        while i > 0 || something_changed_last_cycle {
+            let (flag, item) = &mut document_items[i];
+            println!("something_changed: {something_changed_last_cycle}, flag: {flag}, item: {item:?}");
+
+            if i == 0 {
+                something_changed_last_cycle = false;
+                errs = Vec::new();
+            }
+
+            i = (i + 1) % num_items;
+            if *flag { continue };
+
+            match item {
+                DocumentItem::Constant(Constant(Binding(name, _), expr)) => {
+                    if let Err(err) = expr.assign_types(env) {
+                        errs.push((item.clone(), err));
+                    } else {
+                        match expr.eval(&mut Scope::new(), env) {
+                            Ok(lit) => {
+                                env.register_const(SslIdentifier::new(&name), lit);
+                                something_changed_last_cycle = true;
+                                *flag = true;
+                                println!("    INSERT CONST");
+                            }
+                            Err(err) => {
+                                errs.push((item.clone(), err));
+                            }
+                        }
+                    }
+                }
+                DocumentItem::Function(f) => {
+                    if env.get_fn(&f.name, f.input_types()).is_none() {
+                        env.insert_signature(f);
+                        something_changed_last_cycle = true;
+                        println!("    INSERT SSL FUNC SIGNATURE");
+                    }
+
+                    if let Err(err) = f.assign_types(env) {
+                        errs.push((item.clone(), err));
+                    } else {
+                        println!("    INSERT SSL FUNC");
+                        env.insert_ssl_fn(f.clone());
+                        something_changed_last_cycle = true;
+                        *flag = true;
+                    }
+                }
+            }
+        }
+
+        if errs.len() > 0 {
+            let mut err_string = "Could not fully compile constants and functions into env.".to_string();
+
+            for (i, (item, err)) in errs.into_iter().enumerate() {
+                err_string = match item {
+                    DocumentItem::Constant(Constant(Binding(name, _), expr)) =>
+                        format!("{err_string}\n  [{i}]: Error on constant {name} while evaluating {expr}\n     {err}"),
+                    DocumentItem::Function(f) =>
+                        format!("{err_string}\n  {i}: Error on function {}\n    {err}", f.get_signature_string()),
+                }
+            }
+
+            Err(anyhow!("{err_string}"))
+        } else {
+            Ok(())
+        }
     }
 
     pub fn get_interface(&self, name: impl AsRef<str>) -> Option<&Interface> {
@@ -177,6 +274,7 @@ impl Parse for Document {
         let mut classes = Vec::new();
         let mut interfaces = Vec::new();
         let mut functions = Vec::new();
+        let mut consts = Vec::new();
 
         for pair in pair.into_inner() {
             match pair.as_rule() {
@@ -193,11 +291,14 @@ impl Parse for Document {
                     let function = Function::parse(pair, env)?;
                     functions.push(function);
                 }
+                Rule::constant => {
+                    consts.append(&mut Vec::<Constant>::parse(pair, env)?);
+                }
                 rule => { panic!("(document) Incorrect Rule: {:?}", rule) }
             }
         }
 
-        Ok(Self { classes, interfaces, functions })
+        Ok(Self { classes, interfaces, functions, consts })
     }
 }
 
@@ -596,6 +697,18 @@ impl Function {
     fn get_signature(&self) -> (&String, Vec<&Type>) {
         (&self.name, self.inputs.iter().map(|Binding(_, ty)| ty).collect())
     }
+
+    fn get_signature_string(&self) -> String {
+        format!(
+            "{}({})",
+            self.name,
+            self.inputs.iter().map(|Binding(_, ty)| ty.to_string()).collect::<Vec<_>>().join(", ")
+        )
+    }
+
+    fn input_types(&self) -> Vec<Type> {
+        self.inputs.iter().map(|Binding(_, ty)| ty.clone()).collect()
+    }
 }
 
 impl Parse for Function {
@@ -833,6 +946,34 @@ impl Display for Block {
     }
 }
 
+// constant = { "const" ~ w ~ decl_lvalue ~ w ~ "=" ~ expr ~ ";" }
+#[derive(Debug, PartialEq, Clone)]
+pub struct Constant(Binding, Expr);
+
+impl Parse for Vec<Constant> {
+    fn parse(pair: Pair<Rule>, env: &Environment) -> Result<Self, ParseError> {
+        let tuple_ident = gen_ident("____tuple");
+
+        assert_rule!(pair, constant);
+        let mut pairs = pair.into_inner();
+        assert_pairs!(pairs, 2);
+        let mut consts = LvalueDeclare::parse(pairs.next().unwrap(), env)?
+            .to_tuple_accesses(&tuple_ident).into_iter().map(|(binding, expr)| {
+                Constant(binding, expr)
+            }).collect::<Vec<_>>();
+
+        consts.insert(0, Constant(Binding(tuple_ident, Type::Auto), Expr::parse(pairs.next().unwrap(), env)?));
+
+        Ok(consts)
+    }
+}
+
+impl Display for Constant {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "const {} = {}", self.0, self.1)
+    }
+}
+
 // stmt  = { (decl | asgn | ifelse | (expr ~ ";")) }
 #[derive(Debug, PartialEq, Clone)]
 pub enum Stmt {
@@ -948,6 +1089,18 @@ impl LvalueDeclare {
         match self {
             LvalueDeclare::Binding(binding) => binding,
             LvalueDeclare::TupleDestructure(v) => panic!("All tuple destructuring should have been removed at this point: {v:?}")
+        }
+    }
+
+    fn to_tuple_accesses(self, tuple_name: &String) -> Vec<(Binding, Expr)> {
+        match self {
+            Self::Binding(binding) => vec![(binding, Expr::Var(tuple_name.clone(), Type::Auto))],
+            Self::TupleDestructure(v) => v.into_iter().enumerate().map(|(i, lvalue)| {
+                lvalue.to_tuple_accesses(tuple_name)
+                    .into_iter()
+                    .map(|(var_name, expr)| (var_name, Expr::TupleAccess(Box::new(expr), i)))
+                    .collect::<Vec<_>>()
+            }).flatten().collect::<Vec<_>>()
         }
     }
 }
@@ -1706,7 +1859,7 @@ mod tests {
     #[test]
     fn tuple_test() {
         let script = r#"{
-            let (a, b) = (1.0, 2.0);
+            let (a: f32, b) = (1.0, 2.0);
             let v = vec4(1, 3, 4, 5);
             (a, (b, a), v.x) = (4.0, (1 + 3, -.1 + 8), 8.0);
             let c: (f32, vec4, f32, f32) = (1.0, vec4(1, 3, 2, 1) / 8, 3.0, 4.0);
@@ -1715,7 +1868,7 @@ mod tests {
 
         let block = parse_block(script, &Environment::new()).unwrap();
         let string = test_helpers::prettify_string(format!("{block}"));
-        let mut env = Environment::new();
+        let env = Environment::new();
 
         println!("{}\nwhich returns: {:?}", string, block.eval(&mut Scope::new(), &env));
     }

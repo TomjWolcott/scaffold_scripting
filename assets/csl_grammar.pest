@@ -8,7 +8,7 @@ implement = { ident ~ "::" ~ ident }
 bound = { ident ~ w ~ ":" ~ w ~ (ident ~ w ~ "+" ~ w)* ~ ident }
 bounds = { "<" ~ w ~ bound ~ w ~ ("," ~ w ~ bound ~ w)* ~ ">" }
 
-document = { (w ~ (class | interface | function))* ~ w ~ EOI }
+document = { (w ~ (class | interface | function | constant))* ~ w ~ EOI }
 interface = { "interface" ~ w ~ ident ~ w ~ "{" ~
 		w ~ ((default_method | method_header) ~ w ~ "," ~ w)* ~ (default_method | method_header)? ~ w
 	~ "}"
@@ -29,11 +29,12 @@ method   = {
 }
 function = { "fn" ~ w ~ ident ~ "(" ~
     w ~ (binding ~ w ~ "," ~ w)* ~ binding? ~
-")" ~ w ~ "->" ~ w ~ ty ~ w ~ block}
+")" ~ w ~ "->" ~ w ~ ty ~ w ~ block }
+constant = { "const" ~ w ~ decl_lvalue ~ w ~ "=" ~ w ~ expr ~ w ~ ";" }
 
 block_wrapper = { block }
 block = { "{" ~ w ~ (stmt ~ w)* ~ (expr ~ w)? ~ "}" }
-stmt  = { ( ifelse | for_stmt | ((decl | asgn | expr) ~ ";") ) }
+stmt  = { ( ifelse | for_stmt | ((decl | asgn | expr) ~ w ~ ";") ) }
     decl = { "let" ~ w ~ decl_lvalue ~ w ~ "=" ~ w ~ expr }
         decl_lvalue = { (binding | ident) | ("(" ~ w ~ (decl_lvalue ~ w ~ "," ~ w)+ ~ (decl_lvalue ~ w)? ~ ")") }
     asgn = { lvalue ~ w ~ "=" ~ w ~ expr }
@@ -43,7 +44,7 @@ stmt  = { ( ifelse | for_stmt | ((decl | asgn | expr) ~ ";") ) }
 
 expr = { (prec4) }
     exprs = { "(" ~ w ~ (expr ~ w ~ "," ~ w)* ~ (expr ~ w)? ~ ")" }
-    prec0 = { "(" ~ w ~ prec4 ~ w ~ ")" | app | dot | tuple | lit | var | block_expr_wrapper }
+    prec0 = { tuple | "(" ~ w ~ prec4 ~ w ~ ")" | app | dot | lit | var | block_expr_wrapper }
         app       = { ident ~ w ~ exprs }
         dot       = { ident ~ "." ~ ident ~ exprs }
         tuple     = { "(" ~ w ~ (expr ~ w ~ "," ~ w)+ ~ (expr ~ w)? ~ ")" }
@@ -58,7 +59,7 @@ expr = { (prec4) }
         unary_op = { "!" | "-" | "+" }
         tuple_id = { NUMBER+ }
     prec1 = { unary ~ (w ~ op1 ~ w ~ prec1)? }
-        op1 = { "*" | "/" }
+        op1 = { "*" | "/" | "%" }
     prec2 = { prec1 ~ (w ~ op2 ~ w ~ prec2)? }
         op2 = { "+" | "-" }
     prec3 = { prec2 ~ (w ~ op3 ~ w ~ prec3)? }
