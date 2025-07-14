@@ -21,4 +21,8 @@ pub mod prelude {
     pub use crate::interpreter::*;
     pub use crate::to_wgsl::*;
     pub use crate::utils::*;
+    pub use crate::enviroment::*;
+    pub use crate::any_value::*;
+    pub use crate::scope::*;
+    pub use crate::parser_span::*;
 }
