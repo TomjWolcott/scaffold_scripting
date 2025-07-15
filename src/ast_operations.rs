@@ -106,7 +106,6 @@ impl AssignTypes for Expr {
 
 impl AssignTypes for ExprInner {
     fn assign_types_rec(&mut self, scope: &mut Scope<Type>, env: &Environment) -> AnyResult<Type> {
-        println!("Assign types on: {}\n", self);
         match self {
             ExprInner::BinExpr(left, symbol, right) => {
                 let (left, sym, right) = (left.assign_types_rec(scope, env)?, symbol.as_str(), right.assign_types_rec(scope, env)?);
