@@ -35,16 +35,16 @@ impl WgslDefinitions {
         self.tuples.append(&mut other.tuples);
     }
 
-    pub fn to_wgsl_definition_code(&self, env: &Environment) -> Result<String, ToWgslError> {
+    pub fn to_wgsl_definition_code(&self, env: &Environment) -> AnyResult<String> {
         self.tuples.iter()
             .map(|tuple_type| Ok(format!(
                 "struct {} {{{}\n}}\n",
-                env.get_wgsl_name(&Type::Tuple(tuple_type.clone())).ok_or(ToWgslError::TypeNotFound(format!("{tuple_type:?}")))?,
+                env.get_wgsl_name(&Type::Tuple(tuple_type.clone())).ok_or(anyhow!("Type not found in {tuple_type:?}"))?,
                 tuple_type.iter().enumerate().map(|(i, ty)| {
-                    Ok(format!("\n{TAB}item{i}: {}", env.get_wgsl_name(ty).ok_or(ToWgslError::TypeNotFound(ty.to_string()))?))
-                }).collect::<Result<String, _>>()?
+                    Ok(format!("\n{TAB}item{i}: {}", env.get_wgsl_name(ty).ok_or(anyhow!("Type not found: {ty:?}"))?))
+                }).collect::<AnyResult<String>>()?
             )))
-            .collect::<Result<String, _>>()
+            .collect::<AnyResult<String>>()
     }
 }
 
