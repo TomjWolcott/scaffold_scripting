@@ -77,19 +77,19 @@ impl Structure {
 
     /// Assembles a method to inline trait fn calls and perform some small optimizations
     fn assemble_method(&self, document: &Document, env: &Environment, method_key: MethodKey) -> AnyResult<Method> {
-        self.assemble_method_rec(document, method_key, "".to_string()).map(|mut method| {
-            let mut type_scope = (&method.inputs).into();
-            let _ = method.body.assign_types_rec(&mut type_scope, env);
-            method.body.alpha_convert(&mut IdentScope::new());
-            method.body.inline_blocks(env).unwrap();
-            method.body.cull_single_use_vars();
-            method.body.cull_noops();
+        let mut method = self.assemble_method_rec(document, method_key, "".to_string(), env)?;
 
-            method
-        })
+        let mut type_scope = (&method.inputs).into();
+        method.body.assign_types_rec(&mut type_scope, env)?;
+        method.body.alpha_convert(&mut IdentScope::new());
+        method.body.inline_blocks(env)?;
+        method.body.cull_single_use_vars();
+        method.body.cull_noops();
+
+        Ok(method)
     }
 
-    fn assemble_method_rec(&self, document: &Document, method_key: MethodKey, id: String) -> AnyResult<Method> {
+    fn assemble_method_rec(&self, document: &Document, method_key: MethodKey, id: String, env: &Environment) -> AnyResult<Method> {
         let mut method = document
             .get_method(&self.name, &method_key)
             .with_context(|| format!("Could not find method: {} in {}", method_key, &self.name))?
@@ -121,7 +121,7 @@ impl Structure {
                     };
 
                     let Method { mut body, inputs, .. } = structure.assemble_method_rec(
-                        document, MethodKey::new(Some(&interface.name), &method_name), format!("__{}__", field_name)
+                        document, MethodKey::new(Some(&interface.name), &method_name), format!("__{}__", field_name), env
                     )?;
 
                     for (arg, binding) in args.iter().zip(inputs).rev() {
@@ -135,6 +135,14 @@ impl Structure {
                 _ => Ok(())
             }
         })?;
+
+        let class = document.get_class(&self.name)
+            .with_context(|| format!("Couldn't find class {}", self.name))?;
+
+        let mut ty_scope = class.fields.iter()
+            .map(|Binding(name, ty)| (format!("{id}{name}"), ty.clone())).collect::<Vec<_>>().into();
+
+        method.assign_types_rec(&mut ty_scope, env)?;
 
         Ok(method)
     }

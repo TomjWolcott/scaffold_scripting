@@ -39,6 +39,7 @@ pub struct Structure {
     pub fields: Vec<(String, Field)>
 }
 
+/// Represents the structure of a shape as read from RON
 impl Structure {
     pub fn get_field(&self, name: impl AsRef<str>) -> Option<&Field> {
         self.fields.iter()

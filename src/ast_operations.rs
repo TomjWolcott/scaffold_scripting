@@ -51,14 +51,14 @@ impl AssignTypes for Block {
         }
 
         let return_value = if let Some(expr) = &mut self.1 {
-            Ok(expr.assign_types_rec(scope, env)?)
+            expr.assign_types_rec(scope, env)?
         } else {
-            Ok(Type::Unit)
+            Type::Unit
         };
 
         scope.resize(scope_size);
 
-        return_value
+        Ok(return_value)
     }
 }
 
@@ -106,6 +106,7 @@ impl AssignTypes for Expr {
 
 impl AssignTypes for ExprInner {
     fn assign_types_rec(&mut self, scope: &mut Scope<Type>, env: &Environment) -> AnyResult<Type> {
+        println!("Assign types on: {}\n", self);
         match self {
             ExprInner::BinExpr(left, symbol, right) => {
                 let (left, sym, right) = (left.assign_types_rec(scope, env)?, symbol.as_str(), right.assign_types_rec(scope, env)?);
@@ -180,16 +181,17 @@ impl AssignTypes for ExprInner {
             ExprInner::Var(var, ty) => {
                 let new_ty = if let Some(value) = scope.get(&var) {
                     value.clone()
+                } else if env.get_const(&var).is_some() {
+                    env.get_const(&var).unwrap().1.get_type()
+                } else if *ty != Type::Auto {
+                    ty.clone()
                 } else {
-                    let (_, value) = &*env.get_const(&var)
-                        .ok_or(anyhow!("var {var} not found in scope"))?;
-
-                    value.get_type()
+                    return Err(anyhow!("Could not find var {var} and ty = {ty}"));
                 };
 
-                *ty = new_ty.clone();
+                *ty = new_ty;
 
-                Ok(new_ty)
+                Ok(ty.clone())
             },
             ExprInner::Lit(lit) => Ok(lit.get_type()),
             ExprInner::Block(block) => block.assign_types_rec(scope, env),
@@ -377,7 +379,7 @@ impl Block {
 
                 for (Block(mut stmts, expr_opt), new_var) in blocks.into_iter().rev() {
                     if let Some(expr) = expr_opt {
-                        stmts.push(Stmt::Declare(LvalueDeclare::Binding(Binding(new_var, Type::Auto)), expr));
+                        stmts.push(Stmt::Declare(LvalueDeclare::Binding(Binding(new_var, expr.eval_type(env)?)), expr));
                     }
 
                     promoted_stmts.append(&mut stmts);

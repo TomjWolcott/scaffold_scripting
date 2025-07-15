@@ -67,6 +67,12 @@ impl<T: Display + Clone + PartialEq> From<Vec<(&String, &T)>> for Scope<T> {
     }
 }
 
+impl<T: Display + Clone + PartialEq> From<Vec<(String, T)>> for Scope<T> {
+    fn from(value: Vec<(String, T)>) -> Self {
+        Self(value)
+    }
+}
+
 pub struct ScopeIterator<'a, T: Display + Clone + PartialEq> {
     scope: &'a Scope<T>,
     index: usize
