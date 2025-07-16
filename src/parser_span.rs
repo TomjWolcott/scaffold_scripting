@@ -1,4 +1,4 @@
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use pest::Span;
 use std::path::PathBuf;
@@ -65,13 +65,24 @@ impl SslScript {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct SslSpan {
     start_line_col: (usize, usize),
     start: usize,
     end_line_col: (usize, usize),
     end: usize,
     script: Arc<SslScript>
+}
+impl Debug for SslSpan {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SslSpan")
+            .field("start_line_col", &self.start_line_col)
+            .field("start", &self.start)
+            .field("end_line_col", &self.end_line_col)
+            .field("end", &self.end)
+            .field("script", &"...")
+            .finish()
+    }
 }
 
 impl SslSpan {

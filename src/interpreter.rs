@@ -566,6 +566,8 @@ mod tests {
             select(x + 2, 2, x < x + 1)
         }"#, &env).unwrap();
 
+        println!("{block:?}");
+
         println!("Eval: {}", block.eval_into::<f32>(&env).unwrap())
     }
 
