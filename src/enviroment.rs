@@ -126,74 +126,148 @@ static GLOBAL_ENV: Lazy<Environment> = Lazy::new(|| {
         "mat4x4".into(),
     ).unwrap();
 
-    // Register utility functions
-    env.register_fn(|vector: Vec4| vector.normalize(), "normalize".into()).unwrap();
-    env.register_fn(|vector: Vec4, vector2: Vec4| vector.dot(vector2), "dot".into()).unwrap();
-    env.register_fn(|vector: Vec4| vector.length(), "length".into()).unwrap();
-    env.register_fn(|vector: Vec4| vector.length_squared(), "length_squared".into()).unwrap();
-    env.register_fn(|v1: Vec4, v2: Vec4| v1.distance(v2), "distance".into()).unwrap();
-
-    // Register mathematical functions
-    env.register_fn(|f1: f32, f2: f32, t: f32| f1 * (1.0 - t) + f2 * t, "mix".into()).unwrap();
-    env.register_fn(|v1: Vec4, v2: Vec4, t: f32| v1 * (1.0 - t) + v2 * t, "mix".into()).unwrap();
-    env.register_fn(|m1: Mat4, m2: Mat4, t: f32| m1 * (1.0 - t) + m2 * t, "mix".into()).unwrap();
-    env.register_fn(|edge: f32, x: f32| if x < edge { 0.0 } else { 1.0 }, "step".into()).unwrap();
-    env.register_fn(
-        |edge: Vec4, x: Vec4| Vec4::new(
-            if x.x < edge.x { 0.0 } else { 1.0 },
-            if x.y < edge.y { 0.0 } else { 1.0 },
-            if x.z < edge.z { 0.0 } else { 1.0 },
-            if x.w < edge.w { 0.0 } else { 1.0 },
-        ),
-        "step".into(),
-    ).unwrap();
-
-    // Register smoothstep function
-    env.register_fn(
-        |edge0: f32, edge1: f32, x: f32| {
-            let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
-            t * t * (3.0 - 2.0 * t)
-        },
-        "smoothstep".into(),
-    ).unwrap();
-
-    env.register_fn(
-        |edge0: Vec4, edge1: Vec4, x: Vec4| {
-            let t = ((x - edge0) / (edge1 - edge0)).clamp(Vec4::ZERO, Vec4::ONE);
-            t * t * (Vec4::ONE * 3.0 - Vec4::ONE * 2.0 * t)
-        },
-        "smoothstep".into(),
-    ).unwrap();
-
-    // Register max, min, clamp, and other mathematical functions
-    env.register_fn(|f1: f32, f2: f32| f1.max(f2), "max".into()).unwrap();
-    env.register_fn(|f1: f32, f2: f32| f1.min(f2), "min".into()).unwrap();
-    env.register_fn(|v1: Vec4, v2: Vec4| v1.max(v2), "max".into()).unwrap();
-    env.register_fn(|v1: Vec4, v2: Vec4| v1.min(v2), "min".into()).unwrap();
-    env.register_fn(|f: f32, min: f32, max: f32| f.clamp(min, max), "clamp".into()).unwrap();
-    env.register_fn(|v: Vec4, min: Vec4, max: Vec4| v.clamp(min, max), "clamp".into()).unwrap();
-    env.register_fn(|f: f32| f.cos(), "cos".into()).unwrap();
-    env.register_fn(|f: f32| f.sin(), "sin".into()).unwrap();
-    env.register_fn(|f: f32| f.tan(), "tan".into()).unwrap();
-    env.register_fn(|f: f32| f.acos(), "acos".into()).unwrap();
-    env.register_fn(|f: f32| f.asin(), "asin".into()).unwrap();
-    env.register_fn(|f: f32| f.atan(), "atan".into()).unwrap();
-    env.register_fn(|f1: f32, f2: f32| f1.atan2(f2), "atan2".into()).unwrap();
-    env.register_fn(|f1: f32, f2: f32| f1.powf(f2), "pow".into()).unwrap();
-    env.register_fn(|f: f32| f.sqrt(), "sqrt".into()).unwrap();
-    env.register_fn(|f: f32| f.exp(), "exp".into()).unwrap();
-    env.register_fn(|f: f32| f.log2(), "log2".into()).unwrap();
-    env.register_fn(|f: f32| f.abs(), "abs".into()).unwrap();
+    // f32 and Vec4 math functions
+    env.register_fn(|x: f32| x.abs(), "abs".into()).unwrap();
     env.register_fn(|v: Vec4| v.abs(), "abs".into()).unwrap();
-    env.register_fn(|f: f32| f.floor(), "floor".into()).unwrap();
-    env.register_fn(|f: f32| f.ceil(), "ceil".into()).unwrap();
-    env.register_fn(|f: f32| f.round(), "round".into()).unwrap();
-    env.register_fn(|f: f32| f.fract(), "fract".into()).unwrap();
-    env.register_fn(|v: Vec4| v.fract(), "fract".into()).unwrap();
-    env.register_fn(|f: f32| f.trunc(), "trunc".into()).unwrap();
-    env.register_fn(|v: Vec4| v.trunc(), "trunc".into()).unwrap();
-    env.register_fn(|f: f32| f.signum(), "sign".into()).unwrap();
-    env.register_fn(|v: Vec4| v.signum(), "sign".into()).unwrap();
+
+    env.register_fn(|x: f32| x.acos(), "acos".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::acos), "acos".into()).unwrap();
+
+    env.register_fn(|x: f32| x.acosh(), "acosh".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::acosh), "acosh".into()).unwrap();
+
+    env.register_fn(|x: f32| x.asin(), "asin".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::asin), "asin".into()).unwrap();
+
+    env.register_fn(|x: f32| x.asinh(), "asinh".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::asinh), "asinh".into()).unwrap();
+
+    env.register_fn(|x: f32| x.atan(), "atan".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::atan), "atan".into()).unwrap();
+
+    env.register_fn(|x: f32| x.atanh(), "atanh".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::atanh), "atanh".into()).unwrap();
+
+    env.register_fn(|x: f32, y: f32| x.atan2(y), "atan2".into()).unwrap();
+    env.register_fn(|x: Vec4, y: Vec4| Vec4::new(x.x.atan2(y.x), x.y.atan2(y.y), x.z.atan2(y.z), x.w.atan2(y.w)), "atan2".into()).unwrap();
+
+    env.register_fn(|x: f32| x.ceil(), "ceil".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::ceil), "ceil".into()).unwrap();
+
+    env.register_fn(|x: f32, min: f32, max: f32| x.clamp(min, max), "clamp".into()).unwrap();
+    env.register_fn(|v: Vec4, min: Vec4, max: Vec4| v.clamp(min, max), "clamp".into()).unwrap();
+
+    env.register_fn(|x: f32| x.cos(), "cos".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::cos), "cos".into()).unwrap();
+
+    env.register_fn(|x: f32| x.cosh(), "cosh".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::cosh), "cosh".into()).unwrap();
+
+    // env.register_fn(|x: f32| x.to_bits().leading_zeros() as f32, "countLeadingZeros".into()).unwrap();
+    //
+    // env.register_fn(|x: f32| x.to_bits().count_ones() as f32, "countOneBits".into()).unwrap();
+    //
+    // env.register_fn(|x: f32| x.to_bits().trailing_zeros() as f32, "countTrailingZeros".into()).unwrap();
+
+    env.register_fn(|x: f32| x.to_degrees(), "degrees".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::to_degrees), "degrees".into()).unwrap();
+
+    env.register_fn(|m: Mat4| m.determinant(), "determinant".into()).unwrap();
+
+    env.register_fn(|a: Vec4, b: Vec4| a.distance(b), "distance".into()).unwrap();
+
+    env.register_fn(|a: Vec4, b: Vec4| a.dot(b), "dot".into()).unwrap();
+
+    env.register_fn(|x: f32| x.exp(), "exp".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::exp), "exp".into()).unwrap();
+
+    env.register_fn(|x: f32| x.exp2(), "exp2".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::exp2), "exp2".into()).unwrap();
+
+    env.register_fn(|n: f32| n.floor(), "floor".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::floor), "floor".into()).unwrap();
+
+    env.register_fn(|a: f32, b: f32, c: f32| a.mul_add(b, c), "fma".into()).unwrap();
+    env.register_fn(|v: Vec4, b: Vec4, c: Vec4| Vec4::new(v.x.mul_add(b.x, c.x), v.y.mul_add(b.y, c.y), v.z.mul_add(b.z, c.z), v.w.mul_add(b.w, c.w)), "fma".into()).unwrap();
+
+    env.register_fn(|x: f32| x.fract(), "fract".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::fract), "fract".into()).unwrap();
+
+    env.register_fn(|x: f32| x.sqrt().recip(), "inverseSqrt".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(|x| x.sqrt().recip()), "inverseSqrt".into()).unwrap();
+
+    env.register_fn(|v: Vec4| v.length(), "length".into()).unwrap();
+
+    env.register_fn(|x: f32| x.ln(), "log".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::ln), "log".into()).unwrap();
+
+    env.register_fn(|x: f32| x.log2(), "log2".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::log2), "log2".into()).unwrap();
+
+    env.register_fn(|a: f32, b: f32| a.max(b), "max".into()).unwrap();
+    env.register_fn(|a: Vec4, b: Vec4| a.max(b), "max".into()).unwrap();
+
+    env.register_fn(|a: f32, b: f32| a.min(b), "min".into()).unwrap();
+    env.register_fn(|a: Vec4, b: Vec4| a.min(b), "min".into()).unwrap();
+
+    env.register_fn(|a: f32, b: f32, t: f32| a * (1.0 - t) + b * t, "mix".into()).unwrap();
+    env.register_fn(|a: Vec4, b: Vec4, t: Vec4| a * (Vec4::ONE - t) + b * t, "mix".into()).unwrap();
+
+    env.register_fn(|v: Vec4| v.normalize(), "normalize".into()).unwrap();
+
+    env.register_fn(|a: f32, b: f32| a.powf(b), "pow".into()).unwrap();
+    env.register_fn(|a: Vec4, b: Vec4| Vec4::new(a.x.powf(b.x), a.y.powf(b.y), a.z.powf(b.z), a.w.powf(b.w)), "pow".into()).unwrap();
+
+    env.register_fn(|x: f32| x.to_radians(), "radians".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::to_radians), "radians".into()).unwrap();
+
+    env.register_fn(|v: Vec4, n: Vec4| v.reflect(n), "reflect".into()).unwrap();
+
+    env.register_fn(|i: Vec4, n: Vec4, eta: f32| i.refract(n, eta), "refract".into()).unwrap();
+
+    env.register_fn(|x: f32| x.round(), "round".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::round), "round".into()).unwrap();
+
+    env.register_fn(|x: f32| x.clamp(0.0, 1.0), "saturate".into()).unwrap();
+    env.register_fn(|v: Vec4| v.clamp(Vec4::ZERO, Vec4::ONE), "saturate".into()).unwrap();
+
+    env.register_fn(|x: f32| x.signum(), "sign".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::signum), "sign".into()).unwrap();
+
+    env.register_fn(|x: f32| x.sin(), "sin".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::sin), "sin".into()).unwrap();
+
+    env.register_fn(|x: f32| x.sinh(), "sinh".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::sinh), "sinh".into()).unwrap();
+
+    env.register_fn(|edge0: f32, edge1: f32, x: f32| {
+        let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    }, "smoothstep".into()).unwrap();
+
+    env.register_fn(|edge0: Vec4, edge1: Vec4, x: Vec4| {
+        let t = ((x - edge0) / (edge1 - edge0)).clamp(Vec4::ZERO, Vec4::ONE);
+        t * t * (Vec4::ONE * 3.0 - Vec4::ONE * 2.0 * t)
+    }, "smoothstep".into()).unwrap();
+
+    env.register_fn(|x: f32| x.sqrt(), "sqrt".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::sqrt), "sqrt".into()).unwrap();
+
+    env.register_fn(|edge: f32, x: f32| if x <= edge { 0.0 } else { 1.0 }, "step".into()).unwrap();
+
+    env.register_fn(|edge: Vec4, x: Vec4| Vec4::select(x.cmplt(edge), Vec4::splat(0.0), Vec4::splat(1.0)), "step".into()).unwrap();
+
+    env.register_fn(|x: f32| x.tan(), "tan".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::tan), "tan".into()).unwrap();
+
+    env.register_fn(|x: f32| x.tanh(), "tanh".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::tanh), "tanh".into()).unwrap();
+
+    env.register_fn(|m: Mat4| m.transpose(), "transpose".into()).unwrap();
+
+    env.register_fn(|x: f32| x.trunc(), "trunc".into()).unwrap();
+    env.register_fn(|v: Vec4| v.map(f32::trunc), "trunc".into()).unwrap();
+
 
     env.register_field((|v: Vec4| v.x, |mut v: Vec4, n: f32| {v.x = n; v}), "x".into(), None).unwrap();
     env.register_field((|v: Vec4| v.y, |mut v: Vec4, n: f32| {v.y = n; v}), "y".into(), None).unwrap();
