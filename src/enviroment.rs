@@ -283,7 +283,7 @@ static GLOBAL_ENV: Lazy<Environment> = Lazy::new(|| {
     env.register_const("PI".into(), std::f32::consts::PI.lit(&env));
     env.register_const("E".into(), std::f32::consts::E.lit(&env));
     env.register_const("IDENTITY".into(), Mat4::IDENTITY.lit(&env));
-    env.register_const("INFINITY".into(), f32::INFINITY.lit(&env));
+    env.register_const("BIG_NUMBER".into(), 1_000_000.0.lit(&env));
 
     env
 });
