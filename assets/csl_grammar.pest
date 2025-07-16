@@ -1,6 +1,6 @@
 ident   =  { (LETTER | "_") ~ (LETTER | NUMBER | "_")* }
 ty      =  { "()" | ident | "(" ~ w ~ (ty ~ w ~ "," ~ w)+ ~ (ty ~ w)? ~ ")" }
-w       = _{ ("\n" | "\r" | " " | "\t")* }
+w       = _{ ("\n" | "\r" | " " | "\t" | COMMENT)* }
 binding =  { ident ~ w ~ ":" ~ w ~ ty }
 COMMENT = _{ ("//" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
 

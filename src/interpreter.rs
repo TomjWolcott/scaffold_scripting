@@ -575,7 +575,8 @@ mod tests {
     fn try_eval_block_tuple() {
         let env = Environment::new();
         let block = parse_block(r#"{
-            let v: vec4 = 2 * vec4(1, 2, 3, 4);
+            // sdibcsduhbsoudcbousdbhc
+            let v:/* asuhdbcouasdbcoi*/ vec4 = 2 * vec4(1, 2, 3, 4);
             let x: f32 = v.z;
             select((x + 2, 5 * ZEROS), (-Infinity, x * ONES), x < x + 1)
         }"#, &env).unwrap();
