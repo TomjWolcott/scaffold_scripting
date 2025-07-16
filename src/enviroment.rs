@@ -515,8 +515,8 @@ impl Environment {
             Type::F32 => Some("f32".to_string()),
             Type::Bool => Some("bool".to_string()),
             // If you add angle-brackets, you'll need to re-write how tuple names are made
-            Type::Vec4 => Some("vec4".to_string()),
-            Type::Mat4x4 => Some("mat4x4".to_string()),
+            Type::Vec4 => Some("vec4<f32>".to_string()),
+            Type::Mat4x4 => Some("mat4x4<f32>".to_string()),
             Type::Unit => Some("unit".to_string()),
             Type::Custom(type_name) => {
                 let inner = self.inner();
@@ -530,7 +530,9 @@ impl Environment {
                 Some(format!(
                     "tuple_{}_0",
                     tuple_type.iter()
-                        .map(|ty| self.get_wgsl_name(ty))
+                        .map(|ty| self.get_wgsl_name(ty).map(
+                            |s| s.replace(">", "").replace("<", "")
+                        ))
                         .collect::<Option<Vec<String>>>()?.join("_")
                 ))
             }
