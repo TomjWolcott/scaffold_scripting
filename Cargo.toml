@@ -5,6 +5,10 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = []
+bevy_tracing = ["dep:bevy"]
+
 [dependencies]
 regex = "1.x"
 lazy_static = "1.x"
@@ -16,3 +20,5 @@ anyhow = "1.x"
 dyn-clone = "1.0.x"
 once_cell = "1.x"
 parking_lot = "0.12.x"
+
+bevy = { version = "0.x", optional = true, features = ["trace"] }

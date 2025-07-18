@@ -14,6 +14,9 @@ use crate::interpreter::Eval;
 use crate::prelude::{ToWgsl, ToWgslError, WgslDefinitions, WgslOutput};
 use anyhow::{Context, Result as AnyResult};
 
+#[cfg(feature="bevy_tracing")]
+use bevy::log::info_span;
+
 #[test]
 fn test() {
     let mut env = Environment::new();
@@ -592,6 +595,9 @@ pub enum EnvironmentFunction {
 
 impl EnvironmentFunction {
     pub fn call(&self, inputs: &Vec<Lit>, env: &Environment) -> Lit {
+        #[cfg(feature="bevy_tracing")]
+        let my_span = info_span!("EnvironmentFunction::call").entered();
+
         match self {
             EnvironmentFunction::RustImpl { func, .. } => func.call(inputs, env),
             EnvironmentFunction::RustWgsl { func, .. } => func.call(inputs, env),
@@ -904,7 +910,7 @@ impl SslType for Mat4 {
 }
 
 macro_rules! define_impls {
-    ($n:literal | $($param:ident),*) => {
+    ($n:literal | $(($param:ident, $index:literal)),*) => {
         impl<$($param : SslType),*> FunctionParams for ($($param,)*) {
             fn input_types(env: &Environment) -> Vec<Type> {
                 vec![$($param::ssl_type(env)),*]
@@ -917,10 +923,11 @@ macro_rules! define_impls {
 
         impl<$($param : SslType,)* OUT: SslType, FN: Fn($($param),*) -> OUT> SslCallable<($($param ,)*), OUT> for FN {
             fn call(&self, inputs: &Vec<Lit>, env: &Environment) -> Lit {
+                #[cfg(feature="bevy_tracing")]
+                let my_span = info_span!("SslCallable call", tys = stringify!(Fn($($param),*) -> OUT)).entered();
                 debug_assert_eq!(inputs.len(), $n);
-                let mut iter = inputs.iter();
 
-                self($($param ::from_lit(iter.next().unwrap().clone())),*).lit(env)
+                self($($param ::from_lit(inputs[$index].clone())),*).lit(env)
             }
         }
 
@@ -951,15 +958,14 @@ macro_rules! define_impls {
 }
 
 define_impls!(0 |);
-define_impls!(1 | P1);
-define_impls!(2 | P1, P2);
-define_impls!(3 | P1, P2, P3);
-define_impls!(4 | P1, P2, P3, P4);
-define_impls!(5 | P1, P2, P3, P4, P5);
-define_impls!(6 | P1, P2, P3, P4, P5, P6);
-define_impls!(7 | P1, P2, P3, P4, P5, P6, P7);
-define_impls!(8 | P1, P2, P3, P4, P5, P6, P7, P8);
-define_impls!(9 | P1, P2, P3, P4, P5, P6, P7, P8, P9);
-define_impls!(10 | P1, P2, P3, P4, P5, P6, P7, P8, P9, P10);
-define_impls!(11 | P1, P2, P3, P4, P5, P6, P7, P8, P9, P10, P11);
-define_impls!(12 | P1, P2, P3, P4, P5, P6, P7, P8, P9, P10, P11, P12);
+define_impls!(1 | (P1, 0));
+define_impls!(2 | (P1, 0), (P2, 1));
+define_impls!(3 | (P1, 0), (P2, 1), (P3, 2));
+define_impls!(4 | (P1, 0), (P2, 1), (P3, 2), (P4, 3));
+define_impls!(5 | (P1, 0), (P2, 1), (P3, 2), (P4, 3), (P5, 4));
+define_impls!(6 | (P1, 0), (P2, 1), (P3, 2), (P4, 3), (P5, 4), (P6, 5));
+define_impls!(7 | (P1, 0), (P2, 1), (P3, 2), (P4, 3), (P5, 4), (P6, 5), (P7, 6));
+define_impls!(8 | (P1, 0), (P2, 1), (P3, 2), (P4, 3), (P5, 4), (P6, 5), (P7, 6), (P8, 7));
+define_impls!(9 | (P1, 0), (P2, 1), (P3, 2), (P4, 3), (P5, 4), (P6, 5), (P7, 6), (P8, 7), (P9, 8));
+define_impls!(10 | (P1, 0), (P2, 1), (P3, 2), (P4, 3), (P5, 4), (P6, 5), (P7, 6), (P8, 7), (P9, 8), (P10, 9));
+define_impls!(11 | (P1, 0), (P2, 1), (P3, 2), (P4, 3), (P5, 4), (P6, 5), (P7, 6), (P8, 7), (P9, 8), (P10, 9), (P11, 10));
