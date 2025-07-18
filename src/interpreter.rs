@@ -171,7 +171,7 @@ impl From<()> for Lit {
 impl AssembledStructure {
     pub fn eval_method<OUT: TryFrom<Lit, Error=anyhow::Error>>(&self, method_name: impl AsRef<str>, args: impl IntoArgs) -> AnyResult<OUT> {
         #[cfg(feature="bevy_tracing")]
-        let my_span = info_span!("eval_method", method_name = method_name.as_str().to_string()).entered();
+        let my_span = info_span!("eval_method", method_name = method_name.as_ref().to_string()).entered();
         /* TODO: It's bad to search for the method every single time, I need to find
                 a way to let the user have it/get it fast.  Perhaps give an index? */
         let method = self.get_method(&method_name)
