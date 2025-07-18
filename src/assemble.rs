@@ -11,6 +11,9 @@ use crate::enviroment::Environment;
 use crate::interpreter::Eval;
 use crate::scope::Scope;
 
+#[cfg(feature="bevy_tracing")]
+use bevy::log::info_span;
+
 impl Structure {
     fn get_instance_structure(&self, document: &Document) -> AnyResult<Structure> {
         let class = document.get_class(&self.name)
@@ -194,6 +197,8 @@ impl AssembledStructure {
     }
 
     pub fn evaluate_fields(&mut self, mut scope: Scope<Lit>) -> AnyResult<()> {
+        #[cfg(feature="bevy_tracing")]
+        let my_span = info_span!("evaluate_fields").entered();
         self.evaluated_scope = Scope::new();
 
         for (name, expr) in self.fields.iter() {
@@ -206,6 +211,8 @@ impl AssembledStructure {
     }
 
     pub fn get_method(&self, name: impl AsRef<str>) -> Option<&Method> {
+        #[cfg(feature="bevy_tracing")]
+        let my_span = info_span!("get_method").entered();
         self.methods.iter().find(|method| method.name.as_str() == name.as_ref())
     }
 

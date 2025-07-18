@@ -8,6 +8,9 @@ use once_cell::sync::Lazy;
 use crate::enviroment::{Environment, SslType};
 use crate::scope::Scope;
 
+#[cfg(feature="bevy_tracing")]
+use bevy::log::info_span;
+
 pub trait IntoArgs {
     fn into_args(self) -> Vec<Lit>;
 }
@@ -167,6 +170,8 @@ impl From<()> for Lit {
 
 impl AssembledStructure {
     pub fn eval_method<OUT: TryFrom<Lit, Error=anyhow::Error>>(&self, method_name: impl AsRef<str>, args: impl IntoArgs) -> AnyResult<OUT> {
+        #[cfg(feature="bevy_tracing")]
+        let my_span = info_span!("eval_method", method_name = method_name.as_str().to_string()).entered();
         /* TODO: It's bad to search for the method every single time, I need to find
                 a way to let the user have it/get it fast.  Perhaps give an index? */
         let method = self.get_method(&method_name)
@@ -194,6 +199,8 @@ pub trait Eval {
 
 impl Eval for Block {
     fn eval(&self, scope: &mut Scope<Lit>, env: &Environment) -> AnyResult<Lit> {
+        #[cfg(feature="bevy_tracing")]
+        let my_span = info_span!("eval block").entered();
         let scope_size = scope.size();
 
         for stmt in self.0.iter() {
@@ -222,6 +229,9 @@ impl Eval for Block {
 
 impl Eval for Stmt {
     fn eval(&self, scope: &mut Scope<Lit>, env: &Environment) -> AnyResult<Lit> {
+        #[cfg(feature="bevy_tracing")]
+        let my_span = info_span!("eval stmt", stmt = self.get_name()).entered();
+
         match self {
             Stmt::Declare(lvalue, expr) => {
                 let lit = expr.eval(scope, env)?;
@@ -322,6 +332,9 @@ impl Eval for Expr {
 
 impl Eval for ExprInner {
     fn eval(&self, scope: &mut Scope<Lit>, env: &Environment) -> AnyResult<Lit> {
+        #[cfg(feature="bevy_tracing")]
+        let my_span = info_span!("eval expr", expr = self.get_name()).entered();
+
         match self {
             ExprInner::BinExpr(left, symbol, right) => {
                 let (left, sym, right) = (left.eval(scope, env)?, symbol.as_str(), right.eval(scope, env)?);

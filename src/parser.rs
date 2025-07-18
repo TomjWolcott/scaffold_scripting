@@ -984,6 +984,18 @@ pub enum Stmt {
     Noop,
 }
 
+impl Stmt {
+    pub fn get_name(&self) -> String {
+        match self {
+            Stmt::Declare(_, _) => "Declare".to_string(),
+            Stmt::Assign(_, _) => "Assign".to_string(),
+            Stmt::IfElse(_, _, _) => "IfElse".to_string(),
+            Stmt::Expr(_) => "Expr".to_string(),
+            Stmt::Noop => "Noop".to_string(),
+        }
+    }
+}
+
 impl Parse for Stmt {
     fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
         assert_rule!(pair, stmt);
@@ -1276,6 +1288,23 @@ pub enum ExprInner {
     Var(String, Type),
     Lit(Lit),
     Block(Box<Block>)
+}
+
+impl ExprInner {
+    pub fn get_name(&self) -> String {
+        match self {
+            Self::BinExpr(_, _, _) => "BinExpr".to_string(),
+            Self::UnaryExpr(_, _) => "UnaryExpr".to_string(),
+            Self::Application(_, _) => "Application".to_string(),
+            Self::Dot(_, _, _) => "Dot".to_string(),
+            Self::Field(_, _) => "Field".to_string(),
+            Self::TupleAccess(_, _) => "TupleAccess".to_string(),
+            Self::Tuple(_) => "Tuple".to_string(),
+            Self::Var(_, _) => "Var".to_string(),
+            Self::Lit(_) => "Lit".to_string(),
+            Self::Block(_) => "Block".to_string()
+        }
+    }
 }
 
 impl Parse for Expr {
