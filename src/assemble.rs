@@ -3,7 +3,6 @@ use std::fmt::{Display, Formatter};
 use crate::parser::{Binding, Bound, Document, Expr, ExprInner, Instance, KeyVal, Lit, LvalueDeclare, Method, MethodKey, Stmt, Type, Value as ParseValue};
 use crate::structure::{Field, Structure, TryFromRonValue};
 use crate::tree_walk::{TreeNodeMut, WalkTreeMut};
-
 use anyhow::{anyhow, Context, Result as AnyResult};
 use ron::Value;
 use crate::ast_operations::{AlphaConvert, AssignTypes, IdentScope};

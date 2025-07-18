@@ -230,7 +230,7 @@ impl Eval for Block {
 impl Eval for Stmt {
     fn eval(&self, scope: &mut Scope<Lit>, env: &Environment) -> AnyResult<Lit> {
         #[cfg(feature="bevy_tracing")]
-        let my_span = info_span!("eval stmt", stmt = self.get_name()).entered();
+        let my_span = info_span!("eval stmt").entered();
 
         match self {
             Stmt::Declare(lvalue, expr) => {
@@ -333,7 +333,7 @@ impl Eval for Expr {
 impl Eval for ExprInner {
     fn eval(&self, scope: &mut Scope<Lit>, env: &Environment) -> AnyResult<Lit> {
         #[cfg(feature="bevy_tracing")]
-        let my_span = info_span!("eval expr", expr = self.get_name()).entered();
+        let my_span = info_span!("eval expr").entered();
 
         match self {
             ExprInner::BinExpr(left, symbol, right) => {
