@@ -11,6 +11,7 @@ mod enviroment;
 mod any_value;
 mod scope;
 mod parser_span;
+mod compiler;
 
 pub mod prelude {
     pub use crate::parser::*;
