@@ -3,7 +3,7 @@ use glam::{Mat4, Vec4};
 use pest::iterators::Pair;
 use pest::Parser;
 use pest_derive::Parser;
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::borrow::Borrow;
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::Deref;
@@ -21,15 +21,10 @@ use crate::parser_span::{SslScript, SslSpan};
 
 macro_rules! assert_rule {
     ($pair:expr, $($rule:ident)|*) => {
-        // debug_assert!(
-        //     $($pair .as_rule() == Rule:: $rule || )* false,
-        //     "Expected rules: {:?}, found rule: {:?}",
-        //     &["" $(, stringify!($rule))*][1..], $pair .as_rule()
-        // )
         match $pair.as_rule() {
             $(Rule::$rule)|* => {},
             rule => {
-                return Err(ParseError::BadRule(rule, vec![ $(Rule::$rule),* ]));
+                return Err(anyhow!("Expected one of {:?}, but found rule {:?}", vec![ $(Rule::$rule),* ], rule))
             }
         }
     };
@@ -37,14 +32,10 @@ macro_rules! assert_rule {
 
 macro_rules! assert_pairs {
     ($pairs:expr, $range:pat) => {
-        // debug_assert!(match $pairs .len() {
-        //     $range => true,
-        //     _ => false
-        // }, "Incorrect pairs.len(), {} is not is range {:?}", $pairs .len(), stringify!($range))
         match $pairs.len() {
             $range => {},
             len => {
-                return Err(ParseError::IncorrectNumPairs(len, stringify!($range).to_string()));
+                return Err(anyhow!("Incorrect number of pairs, found len {}, but expected len to be in range {}", len, stringify!($range).to_string()))
             }
         }
     };
@@ -55,7 +46,7 @@ macro_rules! assert_pairs {
 struct ScaffoldParser;
 
 trait Parse where Self: Sized {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError>;
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self>;
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -76,11 +67,10 @@ pub struct Document {
     pub consts: Vec<Constant>
 }
 
-pub fn parse_document(script_str: impl AsRef<str>, path_opt: Option<PathBuf>, env: &Environment) -> Result<Document, ParseError> {
+pub fn parse_document(script_str: impl AsRef<str>, path_opt: Option<PathBuf>, env: &Environment) -> AnyResult<Document> {
     let script = Arc::new(SslScript::new(script_str.as_ref().to_string(), path_opt));
 
-    let mut parsed = ScaffoldParser::parse(Rule::document, script.source.as_str())
-        .map_err(ParseError::BadPestParse)?;
+    let mut parsed = ScaffoldParser::parse(Rule::document, script.source.as_str())?;
 
     Document::parse(parsed.next().unwrap(), env, &script)
 }
@@ -101,16 +91,15 @@ impl Document {
         }
     }
 
-    pub fn from_str(script_str: impl AsRef<str>, path_opt: Option<PathBuf>, env: &Environment) -> Result<Self, ParseError> {
+    pub fn from_str(script_str: impl AsRef<str>, path_opt: Option<PathBuf>, env: &Environment) -> AnyResult<Self> {
         let script = Arc::new(SslScript::new(script_str.as_ref().to_string(), path_opt));
 
-        let mut parsed = ScaffoldParser::parse(Rule::document, script.source.as_str())
-            .map_err(ParseError::BadPestParse)?;
+        let mut parsed = ScaffoldParser::parse(Rule::document, script.source.as_str())?;
 
         Document::parse(parsed.next().unwrap(), env, &script)
     }
 
-    pub fn parse_and_merge_str(&mut self, script_str: impl AsRef<str>, path_opt: Option<PathBuf>, env: &Environment) -> Result<(), ParseError> {
+    pub fn parse_and_merge_str(&mut self, script_str: impl AsRef<str>, path_opt: Option<PathBuf>, env: &Environment) -> AnyResult<()> {
         let document = Document::from_str(script_str, path_opt, env)?;
 
         self.merge(document);
@@ -191,7 +180,7 @@ impl Document {
                     }
                 }
                 DocumentItem::Function(f) => {
-                    if env.get_fn(&f.name, f.input_types()).is_none() {
+                    if env.get_env_fn(&f.name, f.input_types()).is_none() {
                         env.insert_signature(f);
                         something_changed_last_cycle = true;
                     }
@@ -267,7 +256,7 @@ impl Document {
 }
 
 impl Parse for Document {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self> {
         assert_rule!(pair, document);
 
         let mut classes = Vec::new();
@@ -341,7 +330,7 @@ impl Interface {
 }
 
 impl Parse for Interface {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self> {
         assert_rule!(pair, interface);
 
         let mut pairs = pair.into_inner();
@@ -388,7 +377,7 @@ impl InterfaceMethod {
 }
 
 impl Parse for InterfaceMethod {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self> {
         assert_rule!(pair, method_header | default_method);
 
         let mut pairs = pair.into_inner();
@@ -522,7 +511,7 @@ impl Class {
 }
 
 impl Parse for Class {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self> {
         assert_rule!(pair, class);
 
         let mut pairs = pair.into_inner();
@@ -550,7 +539,7 @@ impl Parse for Class {
                 Err(err1) => match Method::parse(pair, env, script) {
                     Ok(method) => methods.push(method),
                     Err(err2) => {
-                        return Err(ParseError::MultipleErrs(Rule::class, vec![err1, err2]))
+                        return Err(anyhow!("Errs while parsing class")).context(err1).context(err2)
                     }
                 }
             };
@@ -593,7 +582,7 @@ pub struct Method {
 }
 
 impl Parse for Method {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self> {
         assert_rule!(pair, method);
         let mut pairs = pair.into_inner();
 
@@ -684,6 +673,12 @@ impl Display for Method {
     }
 }
 
+pub fn parse_fn(script_str: impl AsRef<str>, env: &Environment) -> AnyResult<Function> {
+    let script = Arc::new(SslScript::new(script_str.as_ref().to_string(), None));
+    let mut parsed = ScaffoldParser::parse(Rule::function, script.source.as_str()).unwrap();
+    Function::parse(parsed.next().unwrap(), env, &script)
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Function {
     pub name: String,
@@ -711,7 +706,7 @@ impl Function {
 }
 
 impl Parse for Function {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self> {
         assert_rule!(pair, function);
         let mut pairs = pair.into_inner();
 
@@ -793,7 +788,7 @@ impl Bound {
 }
 
 impl Parse for Bound {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self> {
         assert_rule!(pair, bound);
         let mut pairs = pair.into_inner();
 
@@ -824,7 +819,7 @@ impl Display for Bound {
 
 
 // Useful for tests where I'm just manipulating ASTs
-pub fn parse_block(script_str: impl AsRef<str>, env: &Environment) -> Result<Block, ParseError> {
+pub fn parse_block(script_str: impl AsRef<str>, env: &Environment) -> AnyResult<Block> {
     let script = Arc::new(SslScript::new(script_str.as_ref().to_string(), None));
     let mut parsed = ScaffoldParser::parse(Rule::block_wrapper, script.source.as_str()).unwrap();
     Block::parse(parsed.next().unwrap().into_inner().next().unwrap(), env, &script)
@@ -900,7 +895,7 @@ impl Block {
 }
 
 impl Parse for Block {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self> {
         assert_rule!(pair, block | block_expr);
         let pairs = pair.into_inner();
 
@@ -951,7 +946,7 @@ impl Display for Block {
 pub struct Constant(Binding, Expr);
 
 impl Parse for Vec<Constant> {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self> {
         let tuple_ident = gen_ident("____tuple");
 
         assert_rule!(pair, constant);
@@ -997,7 +992,7 @@ impl Stmt {
 }
 
 impl Parse for Stmt {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self> {
         assert_rule!(pair, stmt);
         let mut stmt_pairs = pair.into_inner();
         assert_pairs!(stmt_pairs, 1);
@@ -1118,11 +1113,13 @@ impl LvalueDeclare {
 }
 
 impl Parse for LvalueDeclare {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self> {
         assert_rule!(pair, decl_lvalue);
         let mut pairs = pair.into_inner();
         assert_pairs!(pairs, 1..);
         let mut lvalue_pair = pairs.next().unwrap();
+
+        assert_rule!(lvalue_pair, binding | ident | decl_lvalue);
 
         match lvalue_pair.as_rule() {
             Rule::binding => {
@@ -1144,9 +1141,7 @@ impl Parse for LvalueDeclare {
 
                 Ok(LvalueDeclare::TupleDestructure(tuple_destructure_items))
             }
-            r => {
-                Err(ParseError::BadRule(r, vec![Rule::binding, Rule::ident, Rule::decl_lvalue]))
-            }
+            _ => unreachable!()
         }
     }
 }
@@ -1205,11 +1200,13 @@ impl Display for LvalueField {
 }
 
 impl Parse for Lvalue {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self> {
         assert_rule!(pair, lvalue);
         let mut pairs = pair.into_inner();
         assert_pairs!(pairs, 1..);
         let mut lvalue_pair = pairs.next().unwrap();
+
+        assert_rule!(lvalue_pair, ident | lvalue);
 
         match lvalue_pair.as_rule() {
             Rule::ident => {
@@ -1220,10 +1217,12 @@ impl Parse for Lvalue {
                     let mut fields = Vec::new();
 
                     loop {
+                        assert_rule!(next_pair, ident | tuple_id);
+
                         fields.push(match next_pair.as_rule() {
                             Rule::ident => LvalueField::Field(next_pair.as_str().to_string()),
                             Rule::tuple_id => LvalueField::TupleAccess(next_pair.as_str().parse().unwrap()),
-                            r => { return Err(ParseError::BadRule(r, vec![Rule::ident, Rule::tuple_id])) }
+                            _ => unreachable!()
                         });
 
                         let Some(next_next_pair) = pairs.next() else { break; };
@@ -1247,9 +1246,7 @@ impl Parse for Lvalue {
 
                 Ok(Lvalue::TupleDestructure(tuple_destructure_items))
             }
-            r => {
-                Err(ParseError::BadRule(r, vec![Rule::ident, Rule::lvalue]))
-            }
+            _ => unreachable!()
         }
     }
 }
@@ -1268,7 +1265,7 @@ impl Display for Lvalue {
     }
 }
 
-pub fn parse_expr(script_str: impl AsRef<str>, env: &Environment) -> Result<Expr, ParseError> {
+pub fn parse_expr(script_str: impl AsRef<str>, env: &Environment) -> AnyResult<Expr> {
     let script = Arc::new(SslScript::new(script_str.as_ref().to_string(), None));
     let mut parsed = ScaffoldParser::parse(Rule::expr, script.source.as_str()).unwrap();
     Expr::parse(parsed.next().unwrap(), env, &script)
@@ -1308,7 +1305,7 @@ impl ExprInner {
 }
 
 impl Parse for Expr {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self> {
         assert_rule!(pair, expr | app | dot | tuple | var | lit | block_expr_wrapper);
         let rule = pair.as_rule();
         let span = pair.as_span();
@@ -1445,7 +1442,7 @@ enum Op {
 }
 
 impl Parse for Op {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self> {
         assert_rule!(pair, prec0 | unary | prec1 | prec2 | prec3 | prec4);
         let precedence = match pair.as_rule() {
             Rule::prec4 => 4,
@@ -1466,10 +1463,13 @@ impl Parse for Op {
 
                 while let Some(pair) = pairs.next() {
                     let span = SslSpan::from_span(pair.as_span(), script.clone());
+
+                    assert_rule!(pair, ident | tuple_id);
+
                     op = match pair.as_rule() {
                         Rule::ident => Op::Expr(Expr(ExprInner::Field(Box::new(op.to_expr()), pair.as_str().to_string()), span)),
                         Rule::tuple_id => Op::Expr(Expr(ExprInner::TupleAccess(Box::new(op.to_expr()), pair.as_str().parse().unwrap()), span)),
-                        r => return Err(ParseError::BadRule(r, vec![Rule::ident, Rule::tuple_id]))
+                        _ => unreachable!()
                     };
                 }
 
@@ -1530,7 +1530,9 @@ impl Op {
 pub struct Binding(pub String, pub Type);
 
 impl Parse for Binding {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self> {
+        assert_rule!(pair, binding | ident);
+
         match pair.as_rule() {
             Rule::binding => {
                 let mut pairs = pair.into_inner();
@@ -1546,7 +1548,7 @@ impl Parse for Binding {
             Rule::ident => {
                 Ok(Self(pair.as_str().to_string(), Type::Auto))
             }
-            rule => Err(ParseError::BadRule(rule, vec![Rule::binding, Rule::ident]))
+            _ => unreachable!()
         }
     }
 }
@@ -1567,11 +1569,11 @@ pub enum Type {
     Auto,
     Unit,
     Tuple(Vec<Type>),
-    Custom(String)
+    Custom(TypeId)
 }
 
 impl Parse for Type {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self> {
         assert_rule!(pair, ty);
 
         match pair.as_str() {
@@ -1582,15 +1584,17 @@ impl Parse for Type {
             "Class" => Ok(Self::Class),
             "()" => Ok(Self::Unit),
             ty => {
-                let mut pairs = pair.into_inner();
+                let mut pairs = pair.clone().into_inner();
 
                 if pairs.len() == 1 && pairs.peek().unwrap().as_rule() == Rule::ident {
                     let type_name = pairs.next().unwrap().as_str().to_string();
+                    let type_id = env.get_type_id(&type_name)
+                        .with_context(|| format!("Could not find registered type with name {}", type_name))?;
 
-                    if env.type_name_exists(&type_name) {
-                        Ok(Self::Custom(type_name))
+                    if env.type_id_exists(&type_id) {
+                        Ok(Self::Custom(type_id))
                     } else {
-                        Err(ParseError::TypeNotFound(type_name))
+                        Err(anyhow!("Type \"{}\" not found registered in env, id: {:?}", type_name, type_id))
                     }
                 } else {
                     let tuple_types = pairs
@@ -1600,7 +1604,7 @@ impl Parse for Type {
                     if tuple_types.len() > 0 {
                         Ok(Self::Tuple(tuple_types))
                     } else {
-                        Err(ParseError::TypeNotFound(ty.to_string()))
+                        Err(anyhow!("Failed to parse type: {}", pair.as_str()))
                     }
                 }
             }
@@ -1631,7 +1635,7 @@ impl Display for Type {
 
                 write!(f, ")")
             },
-            Self::Custom(ty) => write!(f, "{ty}")
+            Self::Custom(ty) => write!(f, "{ty:?}")
         }
     }
 }
@@ -1643,7 +1647,7 @@ pub enum Lit {
     Vec4(Vec4),
     Mat4x4(Mat4),
     Tuple(Vec<Lit>),
-    Custom(Box<dyn AnyValue>, String),
+    Custom(Box<dyn AnyValue>, TypeId),
     Unit
 }
 
@@ -1666,7 +1670,7 @@ impl Lit {
 }
 
 impl Parse for Lit {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self> {
         // assert_rule!(pair, lit);
 
         match pair.as_str() {
@@ -1675,7 +1679,7 @@ impl Parse for Lit {
             lit => {
                 match lit.parse::<f32>() {
                     Ok(num) => Ok(Self::F32(num)),
-                    Err(_) => Err(ParseError::LitNotFound(lit.to_string()))
+                    Err(_) => Err(anyhow!("Failed to parse literal: {}", lit))
                 }
             }
         }
@@ -1718,7 +1722,7 @@ pub struct Instance {
 }
 
 impl Parse for Instance {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self> {
         assert_rule!(pair, instance);
         let mut pairs = pair.into_inner();
 
@@ -1755,7 +1759,7 @@ pub struct KeyVal {
 }
 
 impl Parse for KeyVal {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self> {
         assert_rule!(pair, key_val);
         let span = SslSpan::from_span(pair.as_span(), script.clone());
         let mut pairs = pair.into_inner();
@@ -1787,7 +1791,7 @@ pub enum Value {
 }
 
 impl Parse for Value {
-    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
+    fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> AnyResult<Self> {
         match pair.as_rule() {
             Rule::expr => {
                 Expr::parse(pair, env, script).map(Value::Expr)

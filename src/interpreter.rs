@@ -300,13 +300,16 @@ impl LvalueField {
 
         match &fields[0] {
             LvalueField::Field(field) => {
-                let f = &*env.get_field(&field, val.get_type()).ok_or(
+                let (_, _, getter_index, setter_index) = *env.get_field(&field, val.get_type()).ok_or(
                     anyhow!("Could not find field {} on type {}", field, val.get_type())
-                )?.2;
+                )?;
 
-                let new_lit = LvalueField::get_fields(f.get(val.clone(), env), lit, &fields[1..], env)?;
+                let getter = env.get_fn(getter_index).unwrap();
+                let setter = env.get_fn(setter_index).unwrap();
 
-                Ok(f.set(val, new_lit, env))
+                let new_lit = LvalueField::get_fields(getter.call1(val.clone()), lit, &fields[1..], env)?;
+
+                Ok(setter.call2(val, new_lit))
             }
             LvalueField::TupleAccess(i) => {
                 let Lit::Tuple(mut v) = val else { return Err(anyhow!("Cannot call tuple access on {}", val)); };
@@ -345,24 +348,28 @@ impl Eval for ExprInner {
                     return Ok(Lit::Bool(left != right));
                 }
 
-                let (_, op) = &*env.get_binary_op(sym, left.get_type(), right.get_type())
+                let (_, op_index) = &*env.get_binary_op(sym, left.get_type(), right.get_type())
                     .ok_or(anyhow!(
                         "Could not find binary operation with signature {} {} {}",
                         left.get_type(), symbol, right.get_type()
                     ))?;
 
-                Ok(op.call((left, right), env))
+                let op = env.get_fn(*op_index).unwrap();
+
+                Ok(op.call2(left, right))
             }
             ExprInner::UnaryExpr(symbol, right) => {
                 let (sym, right) = (symbol.as_str(), right.eval(scope, env)?);
 
-                let (_, op) = &*env.get_unary_op(sym, right.get_type())
+                let (_, op_index) = &*env.get_unary_op(sym, right.get_type())
                     .ok_or(anyhow!(
                         "Could not find unary operation with signature {} {}",
                         symbol, right.get_type()
                     ))?;
 
-                Ok(op.call(right, env))
+                let op = env.get_fn(*op_index).unwrap();
+
+                Ok(op.call1(right))
             }
             ExprInner::Application(fn_name, args) => {
                 let (input_types, inputs) = args.iter()
@@ -379,23 +386,25 @@ impl Eval for ExprInner {
                     };
                 }
 
-                let function = &*env.get_fn(fn_name, input_types.clone())
+                let function = &*env.get_env_fn(fn_name, input_types.clone())
                     .ok_or(anyhow!(
                         "Could not find signature {fn_name}({})",
                         inputs.iter().map(|input| format!("{}", input.get_type())).collect::<Vec<_>>().join(", ")
                     ))?;
 
-                Ok(function.call(&inputs, env))
+                Ok(function.call(inputs, env))
             },
             ExprInner::Dot(_, _, _) => Err(anyhow!("EVAL NOT SUPPORTED FOR DOT")),
             ExprInner::Field(expr, field_name) => {
                 let value = expr.eval(scope, env)?;
                 let ty = value.get_type();
 
-                let (_, _, field) = &*env.get_field(field_name, ty.clone())
+                let (_, _, field_index, _) = &*env.get_field(field_name, ty.clone())
                     .ok_or(anyhow!("Field {field_name} not found in {ty}"))?;
 
-                Ok(field.get(value, env))
+                let getter = env.get_fn(*field_index).unwrap();
+
+                Ok(getter.call1(value))
             }
             ExprInner::TupleAccess(expr, index) => match expr.eval(scope, env)? {
                 Lit::Tuple(fields) => {
@@ -416,8 +425,10 @@ impl Eval for ExprInner {
                     return Ok(value.clone());
                 }
 
-                let (_, value) = &*env.get_const(var)
+                let (_, const_index) = &*env.get_env_const(var)
                     .ok_or(anyhow!("var {var} not found in scope"))?;
+
+                let value = env.get_const(*const_index).unwrap();
 
                 Ok(value.clone())
             },
@@ -435,24 +446,28 @@ impl Eval for ExprInner {
                     return Ok(Type::Bool);
                 }
 
-                let (_, op) = &*env.get_binary_op(sym, left.clone(), right.clone())
+                let (_, op_index) = &*env.get_binary_op(sym, left.clone(), right.clone())
                     .ok_or(anyhow!(
                         "Could not find binary operation with signature {} {} {}",
                         left, symbol, right
                     ))?;
 
-                Ok(op.output(env))
+                let op = env.get_fn(*op_index).unwrap();
+
+                Ok(op.output())
             }
             ExprInner::UnaryExpr(symbol, right) => {
                 let (sym, right) = (symbol.as_str(), right.eval_type(env)?);
 
-                let (_, op) = &*env.get_unary_op(sym, right.clone())
+                let (_, op_index) = &*env.get_unary_op(sym, right.clone())
                     .ok_or(anyhow!(
                         "Could not find unary operation with signature {} {}",
                         symbol, right
                     ))?;
 
-                Ok(op.output(env))
+                let op = env.get_fn(*op_index).unwrap();
+
+                Ok(op.output())
             }
             ExprInner::Application(fn_name, args) => {
                 let (input_types) = args.iter()
@@ -467,7 +482,7 @@ impl Eval for ExprInner {
                     };
                 }
 
-                let function = &*env.get_fn(fn_name, input_types.clone())
+                let function = &*env.get_env_fn(fn_name, input_types.clone())
                     .ok_or(anyhow!(
                         "Could not find signature {fn_name}({})",
                         input_types.iter().map(|ty| ty.to_string()).collect::<Vec<_>>().join(", ")
@@ -479,10 +494,12 @@ impl Eval for ExprInner {
             ExprInner::Field(expr, field_name) => {
                 let ty = expr.eval_type(env)?;
 
-                let (_, _, get_field) = &*env.get_field(field_name, ty.clone())
+                let (_, _, getter_index, _) = &*env.get_field(field_name, ty.clone())
                     .ok_or(anyhow!("Field {field_name} not found in {ty}"))?;
 
-                Ok(get_field.output(env))
+                let getter = env.get_fn(*getter_index).unwrap();
+
+                Ok(getter.output())
             }
             ExprInner::TupleAccess(expr, index) => match expr.eval_type(env)? {
                 Type::Tuple(fields) => {
