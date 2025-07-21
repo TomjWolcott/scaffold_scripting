@@ -180,7 +180,9 @@ impl Document {
                     } else {
                         match expr.eval(&mut Scope::new(), env) {
                             Ok(lit) => {
-                                env.register_const(SslIdentifier::new(&name), lit);
+                                if !name.starts_with("_tuple") {
+                                    env.register_const(SslIdentifier::new(&name), lit);
+                                }
                                 something_changed_last_cycle = true;
                                 *flag = true;
                             }
@@ -842,7 +844,7 @@ impl Block {
 
                     while i < block.0.len() {
                         if let Stmt::Declare(LvalueDeclare::TupleDestructure(_), _) = &block.0[i] {
-                            let tuple_name = "____tuple".to_string();
+                            let tuple_name = "_tuple".to_string();
 
                             let Stmt::Declare(lvalue, expr) = block.0.remove(i) else { unreachable!() };
                             let mut destructure_stack: Vec<(_, Expr)> = vec![(lvalue, ExprInner::Var(tuple_name.clone(), Type::Auto).into())];
@@ -866,7 +868,7 @@ impl Block {
 
                             block.0.splice(i..i, new_stmts);
                         } else if let Stmt::Assign(Lvalue::TupleDestructure(_), _) = &block.0[i] {
-                            let tuple_name = "____tuple".to_string();
+                            let tuple_name = "_tuple".to_string();
 
                             let Stmt::Assign(lvalue, expr) = block.0.remove(i) else { unreachable!() };
                             let mut destructure_stack: Vec<(_, Expr)> = vec![(lvalue, ExprInner::Var(tuple_name.clone(), Type::Auto).into())];
@@ -952,7 +954,7 @@ pub struct Constant(Binding, Expr);
 
 impl Parse for Vec<Constant> {
     fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
-        let tuple_ident = gen_ident("____tuple");
+        let tuple_ident = gen_ident("_tuple");
 
         assert_rule!(pair, constant);
         let mut pairs = pair.into_inner();

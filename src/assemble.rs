@@ -52,7 +52,7 @@ impl Structure {
                     let structure_fields = structure.assemble_fields()?;
 
                     fields.append(&mut structure_fields.into_iter().map(
-                        |(other_field_name, expr)| (format!("__{}__{}", field_name, other_field_name), expr)
+                        |(other_field_name, expr)| (format!("_{}__{}", field_name, other_field_name), expr)
                     ).collect::<Vec<_>>())
                 }
             }
@@ -104,7 +104,7 @@ impl Structure {
             let TreeNodeMut::Expr(Expr(expr, span)) = node else { return Ok::<(), anyhow::Error>(()) };
             match expr {
                 ExprInner::Var(var, _) => {
-                    if self.get_field(&var).is_some() || var.starts_with("__") {
+                    if self.get_field(&var).is_some() || var.starts_with("_") {
                         *var = format!("{id}{var}");
                     }
 
@@ -123,7 +123,7 @@ impl Structure {
                     };
 
                     let Method { mut body, inputs, .. } = structure.assemble_method_rec(
-                        document, MethodKey::new(Some(&interface.name), &method_name), format!("__{}__", field_name), env
+                        document, MethodKey::new(Some(&interface.name), &method_name), format!("_{}__", field_name), env
                     )?;
 
                     for (arg, binding) in args.iter().zip(inputs).rev() {
