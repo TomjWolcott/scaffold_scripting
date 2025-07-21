@@ -39,14 +39,15 @@ macro_rules! impl_tuple_stuff {
             fn try_from(value: Lit) -> Result<Self, Self::Error> {
                 match value {
                     Lit::Tuple(fields) => {
+                        let n = fields.len();
                         let mut iter = fields.into_iter();
 
                         $(
-                            let $ty = iter.next().ok_or_else(|| anyhow!("Not enough fields in tuple"))?.try_into()?;
+                            let $ty = iter.next().ok_or_else(|| anyhow!("Not enough fields in tuple, #fields: {n}"))?.try_into()?;
                         )*
 
                         if iter.next().is_some() {
-                            return Err(anyhow!("Too many fields in tuple"));
+                            return Err(anyhow!("Too many fields in tuple, #fields: {n}"));
                         }
 
                         Ok(($($ty,)*))
