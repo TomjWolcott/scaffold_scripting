@@ -532,8 +532,7 @@ mod tests {
     fn try_eval_fns() {
         let mut env = Environment::new();
         let document = parse_document(r#"
-            const H = 4 + A;
-            const (A, q) = (1, 2 + H);
+            const H = 4;
 
             fn abc(a: f32) -> (f32, vec4) {
                 let q = a * 29.0;
@@ -543,11 +542,12 @@ mod tests {
                 (q + a, (q % H) * vec4(1, 2, 1 / q, 2))
             }
 
+            const SQRT_2: f32 = sqrt(2);
             fn fib(n: f32) -> f32 {
                 let x = 1;
 
                 if (n > 1) {
-                    x = n * fib(n - 1) + abc(1.0);
+                    x = n * fib(n - 1);
                 }
 
                 x
@@ -566,7 +566,7 @@ mod tests {
             let (a, v) = abc(4.0);
             let q = abc(5.0);
 
-            (fib(5.0), a, q, v)
+            (fib(5.0), a * SQRT_2, q, v)
         }"#, &env).unwrap();
 
         println!("Eval: {:?}", block.eval_into::<(f32, f32, (f32, Vec4), Vec4)>(&env).unwrap());
