@@ -229,7 +229,7 @@ impl ToWgsl for ExprInner {
             ExprInner::Dot(_, _, _) => Err(anyhow!("I'm not supporting dot expressions yet")),
             ExprInner::Field(expr, field) => {
                 let ty = expr.eval_type(env)?;
-                let (_, wgsl_index, _, _) = &*env.get_field(field, ty.clone())
+                let (_, wgsl_index, _) = &*env.get_field(field, ty.clone())
                     .ok_or(anyhow!("Couldn't find field {} on type {}", field, ty))?;
 
                 let var = expr.to_wgsl_rec(ident_scope, tabs, defs, env)?;

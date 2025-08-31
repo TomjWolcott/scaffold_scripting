@@ -8,7 +8,6 @@ use regex::Regex;
 use crate::enviroment::Environment;
 use crate::parser::{Expr, Lit, parse_expr, ParseError, ExprInner};
 use crate::utils::GetOnMap;
-use anyhow::Error as AnyError;
 
 #[derive(Debug)]
 pub enum FromRonError {
@@ -19,7 +18,7 @@ pub enum FromRonError {
     BadFieldValue(Value),
     NotSeq(Value),
     DynamicIsMissingFields(Map),
-    ParseExprErr(AnyError),
+    ParseExprErr(ParseError),
 }
 
 impl Display for FromRonError {

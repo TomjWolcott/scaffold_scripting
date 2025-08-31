@@ -114,28 +114,24 @@ impl AssignTypes for ExprInner {
                     return Ok(Type::Bool);
                 }
 
-                let (_, op_index) = &*env.get_binary_op(sym, left.clone(), right.clone())
+                let (_, op) = &*env.get_binary_op(sym, left.clone(), right.clone())
                     .ok_or(anyhow!(
                         "Could not find binary operation with signature {} {} {}",
                         left, symbol, right
                     ))?;
 
-                let op = env.get_fn(*op_index).unwrap();
-
-                Ok(op.output())
+                Ok(op.output(env))
             }
             ExprInner::UnaryExpr(symbol, right) => {
                 let (sym, right) = (symbol.as_str(), right.assign_types_rec(scope, env)?);
 
-                let (_, op_index) = &*env.get_unary_op(sym, right.clone())
+                let (_, op) = &*env.get_unary_op(sym, right.clone())
                     .ok_or(anyhow!(
                         "Could not find unary operation with signature {} {}",
                         symbol, right
                     ))?;
 
-                let op = env.get_fn(*op_index).unwrap();
-
-                Ok(op.output())
+                Ok(op.output(env))
             }
             ExprInner::Application(fn_name, args) => {
                 let (input_types) = args.iter_mut()
@@ -150,7 +146,7 @@ impl AssignTypes for ExprInner {
                     };
                 }
 
-                let func = &*env.get_env_fn(&fn_name, input_types.clone())
+                let func = &*env.get_fn(&fn_name, input_types.clone())
                     .ok_or(anyhow!(
                         "Could not find signature {fn_name}({})",
                         input_types.iter().map(|ty| ty.to_string()).collect::<Vec<_>>().join(", ")
@@ -162,12 +158,10 @@ impl AssignTypes for ExprInner {
             ExprInner::Field(expr, field_name) => {
                 let ty = expr.assign_types_rec(scope, env)?;
 
-                let (_, _, getter_index, _) = &*env.get_field(&field_name, ty.clone())
+                let (_, _, get_field) = &*env.get_field(&field_name, ty.clone())
                     .ok_or(anyhow!("Field {field_name} not found in {ty}"))?;
 
-                let getter = env.get_fn(*getter_index).unwrap();
-
-                Ok(getter.output())
+                Ok(get_field.output(env))
             }
             ExprInner::TupleAccess(expr, index) => match expr.assign_types_rec(scope, env)? {
                 Type::Tuple(fields) => {
@@ -186,8 +180,8 @@ impl AssignTypes for ExprInner {
             ExprInner::Var(var, ty) => {
                 let new_ty = if let Some(value) = scope.get(&var) {
                     value.clone()
-                } else if let Some(const_index) = env.get_env_const(&var).map(|map| map.1) {
-                    env.get_const(const_index).unwrap().get_type()
+                } else if env.get_const(&var).is_some() {
+                    env.get_const(&var).unwrap().1.get_type()
                 } else if *ty != Type::Auto {
                     ty.clone()
                 } else {
