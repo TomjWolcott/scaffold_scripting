@@ -5,6 +5,7 @@ use std::fmt::{Debug, Formatter};
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::{Arc};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use glam::{Mat4, Vec4};
 use once_cell::sync::Lazy;
@@ -308,6 +309,10 @@ impl Environment {
         self.0.write()
     }
 
+    pub fn id(&self) -> u32 {
+        self.0.read().env_id
+    }
+
     fn get_item<T>(&self, f: &impl Fn(&EnvironmentInner) -> Option<&T>) -> Option<MappedRwLockReadGuard<T>> {
         if let Some(item) = RwLockReadGuard::try_map(self.inner(), f).ok() {
             Some(item)
@@ -322,8 +327,7 @@ impl Environment {
         let mut wgsl_code = String::new();
         let mut wgsl_defs = WgslDefinitions::new();
 
-        for (name, (wgsl_name, const_index)) in self.inner().constants.iter().chain(GLOBAL_ENV.inner().constants.iter()) {
-            let lit = self.get_const(*const_index).unwrap();
+        for (name, (wgsl_name, lit)) in self.inner().constants.iter().chain(GLOBAL_ENV.inner().constants.iter()) {
             let name = wgsl_name.as_ref().unwrap_or(name);
             let ty = self.get_wgsl_name(&lit.get_type()).context("Expected lit to have valid wgsl type name")?;
             let lit_code = lit.to_wgsl_rec(&mut Vec::new(), 0, &mut wgsl_defs, self)?;
@@ -354,69 +358,22 @@ impl Environment {
     }
 
 
-    fn push_fn(&self, func: impl SslCallableFn) -> usize {
-        let mut inner = self.inner_mut();
-        let index = inner.fns.len() + GLOBAL_ENV.inner().fns.len();
-
-        inner.fns.push(Box::new(func));
-
-        index
-    }
-
-    pub fn get_fn(&self, fn_index: usize) -> Option<MappedRwLockReadGuard<Box<dyn SslCallableFn>>> {
-        let global_fns_len = GLOBAL_ENV.inner().fns.len();
-        let self_fns_len = self.inner().fns.len();
-
-        if fn_index < global_fns_len {
-            Some(RwLockReadGuard::map(GLOBAL_ENV.inner(), |inner| &inner.fns[fn_index]))
-        } else if fn_index < global_fns_len + self_fns_len {
-            Some(RwLockReadGuard::map(self.inner(), |inner| &inner.fns[fn_index]))
-        } else {
-            None
-        }
-    }
-
-
-    fn push_const(&self, lit: Lit) -> usize {
-        let mut inner = self.inner_mut();
-        let index = inner.constants.len() + GLOBAL_ENV.inner().constants.len();
-
-        inner.consts.push(lit);
-
-        index
-    }
-
-    pub fn get_const(&self, index: usize) -> Option<MappedRwLockReadGuard<Lit>> {
-        let global_consts_len = GLOBAL_ENV.inner().consts.len();
-        let self_consts_len = self.inner().consts.len();
-
-        if index < global_consts_len {
-            Some(RwLockReadGuard::map(GLOBAL_ENV.inner(), |inner| &inner.consts[index]))
-        } else if index < global_consts_len + self_consts_len {
-            Some(RwLockReadGuard::map(self.inner(), |inner| &inner.consts[index - global_consts_len]))
-        } else {
-            None
-        }
-    }
-
-
     pub fn register_unary_op<In1: SslType, Out: SslType, FN: IntoSslCallableFn<(In1,), Out>>(
         &self,
         function: FN,
         sym: SslIdentifier
     ) -> Result<(), RegisterError> {
         let in_type = In1::ssl_type();
-        let fn_index = self.push_fn(function.into_callable_function());
 
         self.inner_mut().unary_ops.insert(
             (sym.name, in_type),
-            (sym.wgsl_name, fn_index)
+            (sym.wgsl_name, Arc::new(function.into_callable_function()))
         );
 
         Ok(())
     }
 
-    pub fn get_unary_op(&self, sym: impl AsRef<str>, in1_type: Type) -> Option<MappedRwLockReadGuard<(Option<String>, usize)>> {
+    pub fn get_unary_op(&self, sym: impl AsRef<str>, in1_type: Type) -> Option<MappedRwLockReadGuard<(Option<String>, Arc<dyn SslCallableFn>)>> {
         self.get_item(&|inner| {
             inner.unary_ops.get(&(sym.as_ref().to_string(), in1_type.clone()))
         })
@@ -430,17 +387,16 @@ impl Environment {
     ) -> Result<(), RegisterError> {
         let in1_type = In1::ssl_type();
         let in2_type = In2::ssl_type();
-        let fn_index = self.push_fn(function.into_callable_function());
 
         self.inner_mut().binary_ops.insert(
             (sym.name, in1_type, in2_type),
-            (sym.wgsl_name, fn_index)
+            (sym.wgsl_name, Arc::new(function.into_callable_function()))
         );
 
         Ok(())
     }
 
-    pub fn get_binary_op(&self, sym: impl AsRef<str>, in1_type: Type, in2_type: Type) -> Option<MappedRwLockReadGuard<(Option<String>, usize)>> {
+    pub fn get_binary_op(&self, sym: impl AsRef<str>, in1_type: Type, in2_type: Type) -> Option<MappedRwLockReadGuard<(Option<String>, Arc<dyn SslCallableFn>)>> {
         self.get_item(&|inner| {
             inner.binary_ops.get(&(sym.as_ref().to_string(), in1_type.clone(), in2_type.clone()))
         })
@@ -453,12 +409,11 @@ impl Environment {
         name: SslIdentifier
     ) -> Result<(), RegisterError> {
         let input_types = Params::input_types();
-        let fn_index = self.push_fn(function.into_callable_function());
 
         self.inner_mut().functions.insert(
             (name.name, input_types),
             EnvironmentFunction::RustImpl {
-                fn_index,
+                func: Arc::new(function.into_callable_function()),
                 wgsl_name: name.wgsl_name
             }
         );
@@ -473,12 +428,11 @@ impl Environment {
         wgsl_code: String
     ) -> Result<(), RegisterError> {
         let input_types = Params::input_types();
-        let fn_index = self.push_fn(function.into_callable_function());
 
         self.inner_mut().functions.insert(
             (name.as_ref().to_string(), input_types),
             EnvironmentFunction::RustWgsl {
-                fn_index,
+                func: Arc::new(function.into_callable_function()),
                 wgsl_impl: wgsl_code
             }
         );
@@ -514,12 +468,10 @@ impl Environment {
 
 
     pub fn register_const(&self, sym: SslIdentifier, lit: Lit) {
-        let const_index = self.push_const(lit);
-
-        self.inner_mut().constants.insert(sym.name, (sym.wgsl_name, const_index));
+        self.inner_mut().constants.insert(sym.name, (sym.wgsl_name, lit));
     }
 
-    pub fn get_env_const(&self, sym: impl AsRef<str>) -> Option<MappedRwLockReadGuard<(Option<String>, usize)>> {
+    pub fn get_env_const(&self, sym: impl AsRef<str>) -> Option<MappedRwLockReadGuard<(Option<String>, Lit)>> {
         self.get_item(&|inner| {
             inner.constants.get(&sym.as_ref().to_string())
         })
@@ -534,18 +486,16 @@ impl Environment {
         wgsl_index: Option<usize>
     ) -> Result<(), RegisterError> {
         let in_type = Var::ssl_type();
-        let getter_index = self.push_fn(getter.into_callable_function());
-        let setter_index = self.push_fn(setter.into_callable_function());
 
         self.inner_mut().field.insert(
             (name.name, in_type),
-            (name.wgsl_name, wgsl_index, getter_index, setter_index)
+            (name.wgsl_name, wgsl_index, Arc::new(getter.into_callable_function()), Arc::new(setter.into_callable_function()))
         );
 
         Ok(())
     }
 
-    pub fn get_field(&self, name: impl AsRef<str>, in1_type: Type) -> Option<MappedRwLockReadGuard<(Option<String>, Option<usize>, usize, usize)>> {
+    pub fn get_field(&self, name: impl AsRef<str>, in1_type: Type) -> Option<MappedRwLockReadGuard<(Option<String>, Option<usize>, Arc<dyn SslCallableFn>, Arc<dyn SslCallableFn>)>> {
         self.get_item(&|inner| {
             inner.field.get(&(name.as_ref().to_string(), in1_type.clone()))
         })
@@ -606,28 +556,28 @@ impl Environment {
 
 #[derive(Debug)]
 struct EnvironmentInner {
-    fns: Vec<Box<dyn SslCallableFn>>,
-    consts: Vec<Lit>,
+    env_id: u32,
 
-    /// Map from registered unary ops defined by (symbol, input) to (wgsl_symbol, fn_index)
-    unary_ops: HashMap<(String, Type), (Option<String>, usize)>,
-    /// Map from registered binary ops defined by (symbol, input1, input2) to (wgsl_symbol, fn_index)
-    binary_ops: HashMap<(String, Type, Type), (Option<String>, usize)>,
+    /// Map from registered unary ops defined by (symbol, input) to (wgsl_symbol, fn)
+    unary_ops: HashMap<(String, Type), (Option<String>, Arc<dyn SslCallableFn>)>,
+    /// Map from registered binary ops defined by (symbol, input1, input2) to (wgsl_symbol, fn)
+    binary_ops: HashMap<(String, Type, Type), (Option<String>, Arc<dyn SslCallableFn>)>,
     /// Map from registered functions defined by (name, inputs) to env_function
     functions: HashMap<(String, Vec<Type>), EnvironmentFunction>,
     /// Map from registered constants to (wgsl_name, const_index)
-    constants: HashMap<String, (Option<String>, usize)>,
-    /// Map from (field_name, type) to (wgsl_name, wgsl_index_opt, get_field_index, set_field_index)
-    field: HashMap<(String, Type), (Option<String>, Option<usize>, usize, usize)>,
+    constants: HashMap<String, (Option<String>, Lit)>,
+    /// Map from (field_name, type) to (wgsl_name, wgsl_index_opt, get_field, set_field)
+    field: HashMap<(String, Type), (Option<String>, Option<usize>, Arc<dyn SslCallableFn>, Arc<dyn SslCallableFn>)>,
     /// List of registered types, (name, type_id, wgsl_name)
     types: Vec<(String, TypeId, Option<String>)>,
 }
 
 impl EnvironmentInner {
     fn new() -> Self {
+        static ENV_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
+
         EnvironmentInner {
-            fns: Vec::new(),
-            consts: Vec::new(),
+            env_id: ENV_ID_COUNTER.fetch_add(1, Ordering::SeqCst),
             unary_ops: Default::default(),
             binary_ops: Default::default(),
             functions: Default::default(),
@@ -641,11 +591,11 @@ impl EnvironmentInner {
 #[derive(Debug)]
 pub enum EnvironmentFunction {
     RustImpl {
-        fn_index: usize,
+        func: Arc<dyn SslCallableFn>,
         wgsl_name: Option<String>
     },
     RustWgsl {
-        fn_index: usize,
+        func: Arc<dyn SslCallableFn>,
         wgsl_impl: String
     },
     Ssl(Function),
@@ -658,8 +608,8 @@ impl EnvironmentFunction {
         let my_span = info_span!("EnvironmentFunction::call").entered();
 
         match self {
-            EnvironmentFunction::RustImpl { fn_index, .. } => env.get_fn(*fn_index).unwrap().call(inputs),
-            EnvironmentFunction::RustWgsl { fn_index, .. } => env.get_fn(*fn_index).unwrap().call(inputs),
+            EnvironmentFunction::RustImpl { func, .. } => func.call(inputs),
+            EnvironmentFunction::RustWgsl { func, .. } => func.call(inputs),
             EnvironmentFunction::Ssl(ssl_function) => {
                 let mut scope = inputs.iter().zip(&ssl_function.inputs)
                     .map(|(lit, Binding(name, _))| (name, lit)).collect::<Vec<_>>().into();
@@ -672,8 +622,8 @@ impl EnvironmentFunction {
 
     pub fn output(&self, env: &Environment) -> Type {
         match self {
-            EnvironmentFunction::RustImpl { fn_index, .. } => env.get_fn(*fn_index).unwrap().output(),
-            EnvironmentFunction::RustWgsl { fn_index, .. } => env.get_fn(*fn_index).unwrap().output(),
+            EnvironmentFunction::RustImpl { func, .. } => func.output(),
+            EnvironmentFunction::RustWgsl { func, .. } => func.output(),
             EnvironmentFunction::Ssl(func) => func.output.clone(),
             EnvironmentFunction::SignatureOnly(output) => output.clone()
         }
@@ -696,16 +646,16 @@ trait FunctionParams: 'static + Send + Sync {
     fn type_ids() -> Vec<TypeId>;
 }
 
-struct SslCallableFnObj<F: SslCallable<Params, Out> + 'static + Send + Sync, Params: FunctionParams, Out: SslType> {
-    f: F,
-    params: PhantomData<(Params, Out)>
+pub(crate) struct SslCallableFnObj<F: SslCallable<Params, Out> + 'static + Send + Sync, Params: FunctionParams, Out: SslType> {
+    pub(crate) f: F,
+    pub(crate) params: PhantomData<(Params, Out)>
 }
 
 impl<Params: FunctionParams, Out: SslType, F: SslCallable<Params, Out> + 'static + Send + Sync> SslCallableFnObj<F, Params, Out> {
-    fn new(f: F) -> Self {
+    pub(crate) fn new(f: F) -> Self {
         Self {
             f,
-            params: Default::default(),
+            params: PhantomData::default(),
         }
     }
 }

@@ -700,7 +700,7 @@ impl Function {
         )
     }
 
-    fn input_types(&self) -> Vec<Type> {
+    pub fn input_types(&self) -> Vec<Type> {
         self.inputs.iter().map(|Binding(_, ty)| ty.clone()).collect()
     }
 }

@@ -114,26 +114,22 @@ impl AssignTypes for ExprInner {
                     return Ok(Type::Bool);
                 }
 
-                let (_, op_index) = &*env.get_binary_op(sym, left.clone(), right.clone())
+                let (_, op) = &*env.get_binary_op(sym, left.clone(), right.clone())
                     .ok_or(anyhow!(
                         "Could not find binary operation with signature {} {} {}",
                         left, symbol, right
                     ))?;
-
-                let op = env.get_fn(*op_index).unwrap();
 
                 Ok(op.output())
             }
             ExprInner::UnaryExpr(symbol, right) => {
                 let (sym, right) = (symbol.as_str(), right.assign_types_rec(scope, env)?);
 
-                let (_, op_index) = &*env.get_unary_op(sym, right.clone())
+                let (_, op) = &*env.get_unary_op(sym, right.clone())
                     .ok_or(anyhow!(
                         "Could not find unary operation with signature {} {}",
                         symbol, right
                     ))?;
-
-                let op = env.get_fn(*op_index).unwrap();
 
                 Ok(op.output())
             }
@@ -162,10 +158,8 @@ impl AssignTypes for ExprInner {
             ExprInner::Field(expr, field_name) => {
                 let ty = expr.assign_types_rec(scope, env)?;
 
-                let (_, _, getter_index, _) = &*env.get_field(&field_name, ty.clone())
+                let (_, _, getter, _) = &*env.get_field(&field_name, ty.clone())
                     .ok_or(anyhow!("Field {field_name} not found in {ty}"))?;
-
-                let getter = env.get_fn(*getter_index).unwrap();
 
                 Ok(getter.output())
             }
@@ -186,8 +180,8 @@ impl AssignTypes for ExprInner {
             ExprInner::Var(var, ty) => {
                 let new_ty = if let Some(value) = scope.get(&var) {
                     value.clone()
-                } else if let Some(const_index) = env.get_env_const(&var).map(|map| map.1) {
-                    env.get_const(const_index).unwrap().get_type()
+                } else if let Some(ty) = env.get_env_const(&var).map(|guard| guard.1.get_type()) {
+                    ty
                 } else if *ty != Type::Auto {
                     ty.clone()
                 } else {

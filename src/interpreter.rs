@@ -300,12 +300,9 @@ impl LvalueField {
 
         match &fields[0] {
             LvalueField::Field(field) => {
-                let (_, _, getter_index, setter_index) = *env.get_field(&field, val.get_type()).ok_or(
+                let (_, _, getter, setter) = &*env.get_field(&field, val.get_type()).ok_or(
                     anyhow!("Could not find field {} on type {}", field, val.get_type())
                 )?;
-
-                let getter = env.get_fn(getter_index).unwrap();
-                let setter = env.get_fn(setter_index).unwrap();
 
                 let new_lit = LvalueField::get_fields(getter.call1(val.clone()), lit, &fields[1..], env)?;
 
@@ -348,26 +345,22 @@ impl Eval for ExprInner {
                     return Ok(Lit::Bool(left != right));
                 }
 
-                let (_, op_index) = &*env.get_binary_op(sym, left.get_type(), right.get_type())
+                let (_, op) = &*env.get_binary_op(sym, left.get_type(), right.get_type())
                     .ok_or(anyhow!(
                         "Could not find binary operation with signature {} {} {}",
                         left.get_type(), symbol, right.get_type()
                     ))?;
-
-                let op = env.get_fn(*op_index).unwrap();
 
                 Ok(op.call2(left, right))
             }
             ExprInner::UnaryExpr(symbol, right) => {
                 let (sym, right) = (symbol.as_str(), right.eval(scope, env)?);
 
-                let (_, op_index) = &*env.get_unary_op(sym, right.get_type())
+                let (_, op) = &*env.get_unary_op(sym, right.get_type())
                     .ok_or(anyhow!(
                         "Could not find unary operation with signature {} {}",
                         symbol, right.get_type()
                     ))?;
-
-                let op = env.get_fn(*op_index).unwrap();
 
                 Ok(op.call1(right))
             }
@@ -399,10 +392,8 @@ impl Eval for ExprInner {
                 let value = expr.eval(scope, env)?;
                 let ty = value.get_type();
 
-                let (_, _, field_index, _) = &*env.get_field(field_name, ty.clone())
+                let (_, _, getter, _) = &*env.get_field(field_name, ty.clone())
                     .ok_or(anyhow!("Field {field_name} not found in {ty}"))?;
-
-                let getter = env.get_fn(*field_index).unwrap();
 
                 Ok(getter.call1(value))
             }
@@ -425,10 +416,8 @@ impl Eval for ExprInner {
                     return Ok(value.clone());
                 }
 
-                let (_, const_index) = &*env.get_env_const(var)
+                let (_, value) = &*env.get_env_const(var)
                     .ok_or(anyhow!("var {var} not found in scope"))?;
-
-                let value = env.get_const(*const_index).unwrap();
 
                 Ok(value.clone())
             },
@@ -446,26 +435,22 @@ impl Eval for ExprInner {
                     return Ok(Type::Bool);
                 }
 
-                let (_, op_index) = &*env.get_binary_op(sym, left.clone(), right.clone())
+                let (_, op) = &*env.get_binary_op(sym, left.clone(), right.clone())
                     .ok_or(anyhow!(
                         "Could not find binary operation with signature {} {} {}",
                         left, symbol, right
                     ))?;
-
-                let op = env.get_fn(*op_index).unwrap();
 
                 Ok(op.output())
             }
             ExprInner::UnaryExpr(symbol, right) => {
                 let (sym, right) = (symbol.as_str(), right.eval_type(env)?);
 
-                let (_, op_index) = &*env.get_unary_op(sym, right.clone())
+                let (_, op) = &*env.get_unary_op(sym, right.clone())
                     .ok_or(anyhow!(
                         "Could not find unary operation with signature {} {}",
                         symbol, right
                     ))?;
-
-                let op = env.get_fn(*op_index).unwrap();
 
                 Ok(op.output())
             }
@@ -494,10 +479,8 @@ impl Eval for ExprInner {
             ExprInner::Field(expr, field_name) => {
                 let ty = expr.eval_type(env)?;
 
-                let (_, _, getter_index, _) = &*env.get_field(field_name, ty.clone())
+                let (_, _, getter, _) = &*env.get_field(field_name, ty.clone())
                     .ok_or(anyhow!("Field {field_name} not found in {ty}"))?;
-
-                let getter = env.get_fn(*getter_index).unwrap();
 
                 Ok(getter.output())
             }
