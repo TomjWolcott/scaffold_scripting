@@ -29,7 +29,7 @@ impl WgslDefinitions {
 
     pub fn merge(&mut self, mut other: Self) {
         self.tuples.retain(|tuple_type| {
-            other.tuples.iter().any(|other_tuple_type| tuple_type == other_tuple_type)
+            other.tuples.iter().all(|other_tuple_type| tuple_type != other_tuple_type)
         });
 
         self.tuples.append(&mut other.tuples);
