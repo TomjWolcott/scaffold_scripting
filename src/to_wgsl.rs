@@ -41,7 +41,7 @@ impl WgslDefinitions {
                 "struct {} {{{}\n}}\n",
                 env.get_wgsl_name(&Type::Tuple(tuple_type.clone())).ok_or(anyhow!("Type not found in {tuple_type:?}"))?,
                 tuple_type.iter().enumerate().map(|(i, ty)| {
-                    Ok(format!("\n{TAB}item{i}: {}", env.get_wgsl_name(ty).ok_or(anyhow!("Type not found: {ty:?}"))?))
+                    Ok(format!("\n{TAB}item{i}: {}{}", env.get_wgsl_name(ty).ok_or(anyhow!("Type not found: {ty:?}"))?, if i == tuple_type.len() - 1 { "" } else { "," }))
                 }).collect::<AnyResult<String>>()?
             )))
             .collect::<AnyResult<String>>()
@@ -329,7 +329,7 @@ mod tests {
         let env = Environment::new();
         let script = r#"{
             let (a, d) = (1.0, 2.0);
-            let b = (a, (1 + 3, -.1 + txcfgv), 3 * mat4x4(X, Z, Y, W));
+            let b = (a, (1 + 3, -.1 + 2), 3 * mat4x4(X, Z, Y, W));
             b.1.1 = 2.43;
             let c = (1.0, vec4(1, 3, 2, b.1.1) / 8, 3.0, 4.0);
             b
