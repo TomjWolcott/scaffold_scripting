@@ -50,10 +50,10 @@ impl SslCallableFn for CompiledFn {
 
         let mut i = 0;
 
-        println!();
+        // println!();
         // println!("{}[{}]", " ".repeat(40), registers.iter().map(|r| format!("{:^7}", r.to_string())).collect::<Vec<_>>().join(", "));
         while i < self.instructions.len() {
-            print!("{:<40}", format!("Instruction #{i}: {}", self.instructions[i]));
+            println!("{:<40}", format!("Instruction #{i}: {}", self.instructions[i]));
             match &self.instructions[i] {
                 Instruction::Assign { output_register: output_index, function_index, input_registers: input_indices } => {
                     let mut inputs = Vec::with_capacity(input_indices.len());
@@ -91,7 +91,7 @@ impl SslCallableFn for CompiledFn {
                 }
             }
 
-            println!("[{}]", registers.iter().map(|r| format!("{:^7}", r.to_string())).collect::<Vec<_>>().join(", "));
+            println!("[{}]", registers.iter().map(|r| format!("{}", r.to_string())).collect::<Vec<_>>().join(", "));
         }
 
         Lit::Unit
@@ -311,8 +311,47 @@ impl Stmt {
                             input_register: input_reg
                         });
                     }
-                    Lvalue::Fields(name, fields) => { unimplemented!() }
-                    Lvalue::TupleDestructure(_) => { unimplemented!() }
+                    Lvalue::Fields(name, fields) => {
+                        // let mut current_reg = *scope.get(&name)
+                        //     .context(format!("Could not find var \"{}\" in field assign", name))?;
+                        //
+                        // for field_name in fields.iter().take(fields.len() - 1) {
+                        //     let output_reg = registers_in_use.use_temp();
+                        //
+                        //     let ty = env.get_var_type(&name, scope)?
+                        //         .context(format!("Could not find var \"{}\" in field assign", name))?;
+                        //     let (_, _, getter, _) = &*env.get_field(field_name, ty)
+                        //         .ok_or(anyhow!("Can't find field"))?;
+                        //
+                        //     let getter_index = compiled_env.0.write().get_or_insert_fn(env.id(), format!("[get]{field_name}"), vec![ty], getter.clone());
+                        //
+                        //     instructions.push(Instruction::Assign {
+                        //         output_register: output_reg,
+                        //         function_index: getter_index,
+                        //         input_registers: vec![current_reg],
+                        //     });
+                        //
+                        //     current_reg = output_reg;
+                        // }
+                        //
+                        // let input_reg = expr.compile(env, scope, instructions, registers_in_use, compiled_env)?;
+                        // registers_in_use.free_temp(input_reg);
+                        //
+                        // let last_field_name = fields.last().unwrap();
+                        // let ty = env.get_var_type(&name, scope)?
+                        //     .context(format!("Could not find var \"{}\" in field assign", name))?;
+                        // let (_, _, _, setter) = &*env.get_field(last_field_name, ty)
+                        //     .ok_or(anyhow!("Can't find field"))?;
+                        //
+                        // let setter_index = compiled_env.0.write().get_or_insert_fn(env.id(), format!("[set]{last_field_name}"), vec![ty, input_reg.eval_type(env)?], setter.clone());
+                        //
+                        // instructions.push(Instruction::Assign {
+                        //     output_register: current_reg,
+                        //     function_index: setter_index,
+                        //     input_registers: vec![current_reg, input_reg],
+                        // });
+                    }
+                    Lvalue::TupleDestructure(_) => { panic!("Tuple destructures should have been removed by now") }
                 }
             }
             Stmt::IfElse(if_part, if_elses, else_block) => {
@@ -486,9 +525,15 @@ impl ExprInner {
                 registers_in_use.free_temp(reg);
                 let output_reg = registers_in_use.use_temp();
 
+                let ty = expr.eval_type(env)?;
+                let (_, _, getter, _) = &*env.get_field(field_name, ty.clone())
+                    .ok_or(anyhow!("Can't find field"))?;
+
+                let getter_index = compiled_env.0.write().get_or_insert_fn(env.id(), format!("[get]{field_name}"), vec![ty], getter.clone());
+
                 instructions.push(Instruction::Assign {
                     output_register: output_reg,
-                    function_index: 0,
+                    function_index: getter_index,
                     input_registers: vec![reg],
                 });
 
@@ -505,9 +550,20 @@ impl ExprInner {
                 Err(anyhow!("Not yet implemented"))
             }
             ExprInner::Var(name, _) => {
-                scope.get(name)
-                    .context(format!("Could not find {} in register scope", name))
-                    .cloned()
+                if let Some((_, lit)) = env.get_env_const(name).as_deref().as_ref() {
+                    let index = registers_in_use.use_temp();
+
+                    instructions.push(Instruction::Set {
+                        lit: lit.clone(),
+                        register: index,
+                    });
+
+                    Ok(index)
+                } else {
+                    scope.get(name)
+                        .context(format!("Could not find {} in register scope", name))
+                        .cloned()
+                }
             }
             ExprInner::Lit(lit) => {
                 let register = registers_in_use.use_temp();
@@ -604,24 +660,9 @@ impl CompiledEnvInner {
 fn test_compilation() {
     let mut script =
         r#"fn abc(x: f32) -> f32 {
-            if (x > 1) {
-                x = x * abc(x-1);
-            } else {
-                x = 1;
-            }
+            let v = vec4(1, x, 2, x*3);
 
-            x
-
-            // let y = min(3 * x, 3);
-            // let z = true;
-            // if (!z) {
-            //     y = y + 3;
-            // } else if (z && true) {
-            //     y = y - 3;
-            // } else {
-            //     y = y + y + y + y;
-            // }
-            // x + y
+            (v * 2).y + (v + vec4(PI, 1, 1, 1)).w
         }"#;
 
     let mut env = Environment::new();
@@ -633,7 +674,7 @@ fn test_compilation() {
     let compiled_env = CompiledEnv::new();
     let compiled_fn = function.compile(&env, &compiled_env).unwrap();
     println!("CompiledEnv:\n{compiled_env:#?}\nCompiledFn:\n{compiled_fn}");
-    let output = compiled_fn.call1(Lit::F32(4.99));
+    let output = compiled_fn.call1(Lit::F32(5.0));
 
     println!("output: {output}");
 }
