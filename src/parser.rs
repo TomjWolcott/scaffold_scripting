@@ -1896,7 +1896,7 @@ mod tests {
     #[test]
     fn tuple_test() {
         let script = r#"{
-            let (a: f32, b) = (1.0, 2.0);
+            let (a, b) = tuple_math((1.9, 3.2));
             let v = vec4(1, 3, 4, 5);
             (a, (b, a), v.x) = (4.0, (1 + 3, -.1 + 8), 8.0);
             let c: (f32, vec4, f32, f32) = (1.0, vec4(1, 3, 2, 1) / 8, 3.0, 4.0);
@@ -1905,7 +1905,9 @@ mod tests {
 
         let block = parse_block(script, &Environment::new()).unwrap();
         let string = test_helpers::prettify_string(format!("{block}"));
-        let env = Environment::new();
+        let mut env = Environment::new();
+
+        env.register_fn(|x: (f32, f32)| (x.0 + x.1, x.0 - x.1), "tuple_math".into()).unwrap();
 
         println!("{}\nwhich returns: {:?}", string, block.eval(&mut Scope::new(), &env));
     }

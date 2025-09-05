@@ -199,7 +199,6 @@ impl TryFromRonValue for Mat4 {
     }
 }
 
-
 pub fn ron_preprocess(string: String) -> String {
     lazy_static! {
         static ref EXPR_NAME_MATCH: Regex = Regex::new(r"Expr\(").unwrap();

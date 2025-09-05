@@ -71,7 +71,7 @@ impl Structure {
                 document,
                 env,
                 MethodKey::new(method.implementation.as_ref(), &method.name)
-            )?);
+            ).context(format!("Could not assemble method: {}", method.name))?);
         }
 
         Ok(methods)
@@ -79,12 +79,13 @@ impl Structure {
 
     /// Assembles a method to inline trait fn calls and perform some small optimizations
     fn assemble_method(&self, document: &Document, env: &Environment, method_key: MethodKey) -> AnyResult<Method> {
-        let mut method = self.assemble_method_rec(document, method_key, "".to_string(), env)?;
+        let mut method = self.assemble_method_rec(document, method_key.clone(), "".to_string(), env)
+            .with_context(|| format!("Could not do assemble_method_rec on {method_key}"))?;;
 
         let mut type_scope = (&method.inputs).into();
-        method.body.assign_types_rec(&mut type_scope, env)?;
+        method.body.assign_types_rec(&mut type_scope, env).with_context(|| format!("Could not assign types on {method}"))?;
         method.body.alpha_convert(&mut IdentScope::new());
-        method.body.inline_blocks(env)?;
+        method.body.inline_blocks(env).with_context(|| format!("Could not inline blocks on {method}"))?;;
         method.body.cull_single_use_vars();
         method.body.cull_noops();
 
