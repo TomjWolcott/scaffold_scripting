@@ -832,6 +832,8 @@ pub fn parse_block(script_str: impl AsRef<str>, env: &Environment) -> Result<Blo
 #[derive(Debug, PartialEq, Clone)]
 pub struct Block(pub Vec<Stmt>, pub Option<Expr>);
 
+const INSERTED_TUPLE_NAME: &str = "_t__tuple";
+
 impl Block {
     fn simplify_destructuring(&mut self) {
         self.walk_tree_mut_with_options(Options::default(), &mut |node| {
@@ -841,7 +843,7 @@ impl Block {
 
                     while i < block.0.len() {
                         if let Stmt::Declare(LvalueDeclare::TupleDestructure(_), _) = &block.0[i] {
-                            let tuple_name = "_tuple".to_string();
+                            let tuple_name = INSERTED_TUPLE_NAME.to_string();
 
                             let Stmt::Declare(lvalue, expr) = block.0.remove(i) else { unreachable!() };
                             let mut destructure_stack: Vec<(_, Expr)> = vec![(lvalue, ExprInner::Var(tuple_name.clone(), Type::Auto).into())];
@@ -865,7 +867,7 @@ impl Block {
 
                             block.0.splice(i..i, new_stmts);
                         } else if let Stmt::Assign(Lvalue::TupleDestructure(_), _) = &block.0[i] {
-                            let tuple_name = "_tuple".to_string();
+                            let tuple_name = INSERTED_TUPLE_NAME.to_string();
 
                             let Stmt::Assign(lvalue, expr) = block.0.remove(i) else { unreachable!() };
                             let mut destructure_stack: Vec<(_, Expr)> = vec![(lvalue, ExprInner::Var(tuple_name.clone(), Type::Auto).into())];

@@ -13,6 +13,8 @@ use crate::scope::Scope;
 #[cfg(feature="bevy_tracing")]
 use bevy::log::info_span;
 
+const FIELD_PREFIX: &'static str = "_f__";
+
 impl Structure {
     fn get_instance_structure(&self, document: &Document) -> AnyResult<Structure> {
         let class = document.get_class(&self.name)
@@ -52,7 +54,7 @@ impl Structure {
                     let structure_fields = structure.assemble_fields()?;
 
                     fields.append(&mut structure_fields.into_iter().map(
-                        |(other_field_name, expr)| (format!("_{}__{}", field_name, other_field_name), expr)
+                        |(other_field_name, expr)| (format!("{FIELD_PREFIX}{}__{}", field_name, other_field_name), expr)
                     ).collect::<Vec<_>>())
                 }
             }
@@ -105,7 +107,7 @@ impl Structure {
             let TreeNodeMut::Expr(Expr(expr, span)) = node else { return Ok::<(), anyhow::Error>(()) };
             match expr {
                 ExprInner::Var(var, _) => {
-                    if self.get_field(&var).is_some() || var.starts_with("_") {
+                    if self.get_field(&var).is_some() || var.starts_with(FIELD_PREFIX) {
                         *var = format!("{id}{var}");
                     }
 
@@ -124,7 +126,7 @@ impl Structure {
                     };
 
                     let Method { mut body, inputs, .. } = structure.assemble_method_rec(
-                        document, MethodKey::new(Some(&interface.name), &method_name), format!("_{}__", field_name), env
+                        document, MethodKey::new(Some(&interface.name), &method_name), format!("{FIELD_PREFIX}{}__", field_name), env
                     )?;
 
                     for (arg, binding) in args.iter().zip(inputs).rev() {
