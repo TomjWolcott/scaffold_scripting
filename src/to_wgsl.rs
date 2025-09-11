@@ -186,15 +186,19 @@ impl ToWgsl for Stmt {
             }
             Stmt::IfElse((if_expr, if_block), else_ifs, else_block) => {
                 Ok(format!(
-                    "if {} {} {} {}",
+                    "if ({}) {} {} {}",
                     if_expr.to_wgsl_rec(ident_scope, tabs, defs, env)?,
                     if_block.to_wgsl_rec(ident_scope, tabs, defs, env)?,
                     else_ifs.iter().map(|(expr, block)| Ok(format!(
-                        "else if {} {}",
+                        "else if ({}) {}",
                         expr.to_wgsl_rec(ident_scope, tabs, defs, env)?,
                         block.to_wgsl_rec(ident_scope, tabs, defs, env)?,
                     ))).collect::<AnyResult<Vec<_>>>()?.join(" "),
-                    else_block.as_ref().map(|block| block.to_wgsl_rec(ident_scope, tabs, defs, env)).unwrap_or(Ok("".to_string()))?
+                    if let Some(block) = else_block {
+                        format!(" else {}", block.to_wgsl_rec(ident_scope, tabs, defs, env)?)
+                    } else {
+                        "".to_string()
+                    }
                 ))
             }
             Stmt::Expr(expr) => Ok(format!("{};\n", expr.to_wgsl_rec(ident_scope, tabs, defs, env)?)),
@@ -330,8 +334,16 @@ mod tests {
         let script = r#"{
             let (a, d) = (1.0, 2.0);
             let b = (a, (1 + 3, -.1 + 2), 3 * mat4x4(X, Z, Y, W));
+            let z = 4;
+            if (true) {
+                z = 3;
+            } else if (false) {
+                z = 2;
+            } else {
+                z = 1;
+            }
             b.1.1 = 2.43;
-            let c = (1.0, vec4(1, 3, 2, b.1.1) / 8, 3.0, 4.0);
+            let c = (z, vec4(1, 3, 2, b.1.1) / 8, 3.0, 4.0);
             b
         }"#;
 
