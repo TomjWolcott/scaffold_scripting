@@ -3,7 +3,7 @@ use glam::{Mat4, Vec4};
 use pest::iterators::Pair;
 use pest::Parser;
 use pest_derive::Parser;
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::borrow::Borrow;
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::Deref;
@@ -67,6 +67,14 @@ pub enum ParseError {
     IncorrectNumPairs(usize, String),
     BadPestParse(pest::error::Error<Rule>)
 }
+
+impl Display for ParseError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl std::error::Error for ParseError {}
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Document {
@@ -191,7 +199,7 @@ impl Document {
                     }
                 }
                 DocumentItem::Function(f) => {
-                    if env.get_fn(&f.name, f.input_types()).is_none() {
+                    if env.get_env_fn(&f.name, f.input_types()).is_none() {
                         env.insert_signature(f);
                         something_changed_last_cycle = true;
                     }
@@ -684,6 +692,12 @@ impl Display for Method {
     }
 }
 
+pub fn parse_fn(script_str: impl AsRef<str>, env: &Environment) -> Result<Function, ParseError> {
+    let script = Arc::new(SslScript::new(script_str.as_ref().to_string(), None));
+    let mut parsed = ScaffoldParser::parse(Rule::function, script.source.as_str()).unwrap();
+    Function::parse(parsed.next().unwrap(), env, &script)
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Function {
     pub name: String,
@@ -705,7 +719,7 @@ impl Function {
         )
     }
 
-    fn input_types(&self) -> Vec<Type> {
+    pub fn input_types(&self) -> Vec<Type> {
         self.inputs.iter().map(|Binding(_, ty)| ty.clone()).collect()
     }
 }
@@ -1569,7 +1583,7 @@ pub enum Type {
     Auto,
     Unit,
     Tuple(Vec<Type>),
-    Custom(String)
+    Custom(TypeId)
 }
 
 impl Parse for Type {
@@ -1584,13 +1598,15 @@ impl Parse for Type {
             "Class" => Ok(Self::Class),
             "()" => Ok(Self::Unit),
             ty => {
-                let mut pairs = pair.into_inner();
+                let mut pairs = pair.clone().into_inner();
 
                 if pairs.len() == 1 && pairs.peek().unwrap().as_rule() == Rule::ident {
                     let type_name = pairs.next().unwrap().as_str().to_string();
+                    let type_id = env.get_type_id(&type_name)
+                        .ok_or(ParseError::TypeNotFound(type_name.to_string()))?;
 
-                    if env.type_name_exists(&type_name) {
-                        Ok(Self::Custom(type_name))
+                    if env.type_id_exists(&type_id) {
+                        Ok(Self::Custom(type_id))
                     } else {
                         Err(ParseError::TypeNotFound(type_name))
                     }
@@ -1633,7 +1649,7 @@ impl Display for Type {
 
                 write!(f, ")")
             },
-            Self::Custom(ty) => write!(f, "{ty}")
+            Self::Custom(ty) => write!(f, "{ty:?}")
         }
     }
 }
@@ -1645,7 +1661,7 @@ pub enum Lit {
     Vec4(Vec4),
     Mat4x4(Mat4),
     Tuple(Vec<Lit>),
-    Custom(Box<dyn AnyValue>, String),
+    Custom(Box<dyn AnyValue>, TypeId),
     Unit
 }
 

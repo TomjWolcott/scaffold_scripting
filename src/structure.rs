@@ -112,7 +112,7 @@ impl TryFromRonValue for Field {
                     Ok(Self::Structure(Box::new(Structure::try_from_ron_value(Value::Map(m), env)?)))
 
                 } else if let Some(Value::String(expr)) = m.get("expr") {
-                    Ok(Self::Expr(parse_expr(expr, env).map_err(|err| FromRonError::ParseExprErr(err))?))
+                    Ok(Self::Expr(parse_expr(expr, env).map_err(|err| FromRonError::ParseExprErr(err.into()))?))
 
                 } else {
                     Err(FromRonError::DynamicIsMissingFields(m))
