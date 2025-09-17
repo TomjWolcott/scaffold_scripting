@@ -518,16 +518,22 @@ fn try_out_ops() {
     let env = Environment::new();
 
     let mut block = parse_block(r#"{
-        let x: f32 = 4;
-        let y: Vec4 = 2 * {
-            let x: Vec4 = x * vector;
+        let vector: vec4 = vec4(1, 2, 3, 4);
+        let (x, q) = {
+            let b = vector.x;
+            (1, b + 4)
+        };
+        let y = 2 * {
+            let x  = x * vector;
             x = 0.5 * x;
             let y: f32 = { let a: f32 = 2; a + 4 } / { let x: f32 = 8; x = 3; x + 2 };
             y * x
         };
-        let x: Vec4 = x * y;
+        let x  = x * y;
         (x + y, 5)
     }"#, &env).unwrap();
+
+    block.assign_types(&env).unwrap();
 
     let before = prettify_string(format!("{}", block.clone()));
 

@@ -13,6 +13,8 @@ use crate::scope::Scope;
 #[cfg(feature="bevy_tracing")]
 use bevy::log::info_span;
 
+const FIELD_PREFIX: &'static str = "_f__";
+
 impl Structure {
     fn get_instance_structure(&self, document: &Document) -> AnyResult<Structure> {
         let class = document.get_class(&self.name)
@@ -52,7 +54,7 @@ impl Structure {
                     let structure_fields = structure.assemble_fields()?;
 
                     fields.append(&mut structure_fields.into_iter().map(
-                        |(other_field_name, expr)| (format!("__{}__{}", field_name, other_field_name), expr)
+                        |(other_field_name, expr)| (format!("{FIELD_PREFIX}{}__{}", field_name, other_field_name), expr)
                     ).collect::<Vec<_>>())
                 }
             }
@@ -71,7 +73,7 @@ impl Structure {
                 document,
                 env,
                 MethodKey::new(method.implementation.as_ref(), &method.name)
-            )?);
+            ).context(format!("Could not assemble method: {}", method.name))?);
         }
 
         Ok(methods)
@@ -79,12 +81,13 @@ impl Structure {
 
     /// Assembles a method to inline trait fn calls and perform some small optimizations
     fn assemble_method(&self, document: &Document, env: &Environment, method_key: MethodKey) -> AnyResult<Method> {
-        let mut method = self.assemble_method_rec(document, method_key, "".to_string(), env)?;
+        let mut method = self.assemble_method_rec(document, method_key.clone(), "".to_string(), env)
+            .with_context(|| format!("Could not do assemble_method_rec on {method_key}"))?;;
 
         let mut type_scope = (&method.inputs).into();
-        method.body.assign_types_rec(&mut type_scope, env)?;
+        method.body.assign_types_rec(&mut type_scope, env).with_context(|| format!("Could not assign types on {method}"))?;
         method.body.alpha_convert(&mut IdentScope::new());
-        method.body.inline_blocks(env)?;
+        method.body.inline_blocks(env).with_context(|| format!("Could not inline blocks on {method}"))?;;
         method.body.cull_single_use_vars();
         method.body.cull_noops();
 
@@ -104,7 +107,7 @@ impl Structure {
             let TreeNodeMut::Expr(Expr(expr, span)) = node else { return Ok::<(), anyhow::Error>(()) };
             match expr {
                 ExprInner::Var(var, _) => {
-                    if self.get_field(&var).is_some() || var.starts_with("__") {
+                    if self.get_field(&var).is_some() || var.starts_with(FIELD_PREFIX) {
                         *var = format!("{id}{var}");
                     }
 
@@ -123,7 +126,7 @@ impl Structure {
                     };
 
                     let Method { mut body, inputs, .. } = structure.assemble_method_rec(
-                        document, MethodKey::new(Some(&interface.name), &method_name), format!("__{}__", field_name), env
+                        document, MethodKey::new(Some(&interface.name), &method_name), format!("{FIELD_PREFIX}{}__", field_name), env
                     )?;
 
                     for (arg, binding) in args.iter().zip(inputs).rev() {

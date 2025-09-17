@@ -29,7 +29,7 @@ impl WgslDefinitions {
 
     pub fn merge(&mut self, mut other: Self) {
         self.tuples.retain(|tuple_type| {
-            other.tuples.iter().any(|other_tuple_type| tuple_type == other_tuple_type)
+            other.tuples.iter().all(|other_tuple_type| tuple_type != other_tuple_type)
         });
 
         self.tuples.append(&mut other.tuples);
@@ -41,7 +41,7 @@ impl WgslDefinitions {
                 "struct {} {{{}\n}}\n",
                 env.get_wgsl_name(&Type::Tuple(tuple_type.clone())).ok_or(anyhow!("Type not found in {tuple_type:?}"))?,
                 tuple_type.iter().enumerate().map(|(i, ty)| {
-                    Ok(format!("\n{TAB}item{i}: {}", env.get_wgsl_name(ty).ok_or(anyhow!("Type not found: {ty:?}"))?))
+                    Ok(format!("\n{TAB}item{i}: {}{}", env.get_wgsl_name(ty).ok_or(anyhow!("Type not found: {ty:?}"))?, if i == tuple_type.len() - 1 { "" } else { "," }))
                 }).collect::<AnyResult<String>>()?
             )))
             .collect::<AnyResult<String>>()
@@ -186,15 +186,19 @@ impl ToWgsl for Stmt {
             }
             Stmt::IfElse((if_expr, if_block), else_ifs, else_block) => {
                 Ok(format!(
-                    "if {} {} {} {}",
+                    "if ({}) {} {} {}",
                     if_expr.to_wgsl_rec(ident_scope, tabs, defs, env)?,
                     if_block.to_wgsl_rec(ident_scope, tabs, defs, env)?,
                     else_ifs.iter().map(|(expr, block)| Ok(format!(
-                        "else if {} {}",
+                        "else if ({}) {}",
                         expr.to_wgsl_rec(ident_scope, tabs, defs, env)?,
                         block.to_wgsl_rec(ident_scope, tabs, defs, env)?,
                     ))).collect::<AnyResult<Vec<_>>>()?.join(" "),
-                    else_block.as_ref().map(|block| block.to_wgsl_rec(ident_scope, tabs, defs, env)).unwrap_or(Ok("".to_string()))?
+                    if let Some(block) = else_block {
+                        format!(" else {}", block.to_wgsl_rec(ident_scope, tabs, defs, env)?)
+                    } else {
+                        "".to_string()
+                    }
                 ))
             }
             Stmt::Expr(expr) => Ok(format!("{};\n", expr.to_wgsl_rec(ident_scope, tabs, defs, env)?)),
@@ -329,9 +333,17 @@ mod tests {
         let env = Environment::new();
         let script = r#"{
             let (a, d) = (1.0, 2.0);
-            let b = (a, (1 + 3, -.1 + txcfgv), 3 * mat4x4(X, Z, Y, W));
+            let b = (a, (1 + 3, -.1 + 2), 3 * mat4x4(X, Z, Y, W));
+            let z = 4;
+            if (true) {
+                z = 3;
+            } else if (false) {
+                z = 2;
+            } else {
+                z = 1;
+            }
             b.1.1 = 2.43;
-            let c = (1.0, vec4(1, 3, 2, b.1.1) / 8, 3.0, 4.0);
+            let c = (z, vec4(1, 3, 2, b.1.1) / 8, 3.0, 4.0);
             b
         }"#;
 
@@ -361,11 +373,11 @@ mod tests {
         let method = assembled_structure.get_method("proj").unwrap();
 
         let string = method.to_wgsl(&mut vec![
-                    ("__shape2__shift".to_string(), "vec4_data_array[1]".to_string()),
-                    ("__shape1__normal".to_string(), "vec4_data_array[0]".to_string()),
-                    ("__shape2____shape__radius".to_string(), "f32_data_array[1]".to_string()),
+                    ("_shape2__shift".to_string(), "vec4_data_array[1]".to_string()),
+                    ("_shape1__normal".to_string(), "vec4_data_array[0]".to_string()),
+                    ("_shape2___shape__radius".to_string(), "f32_data_array[1]".to_string()),
                 ], &env).unwrap();
 
-        assert_eq!(&string.wgsl_code[..], "fn proj(vector: vec4) -> vec4 {\n    var vector_00004: vec4 = ((5.0 + (length((vector - vec4_data_array[1])) - f32_data_array[1])) * ((f32_data_array[1] * normalize((vector - vec4_data_array[1]))) + vec4_data_array[1]));\n    return ((vector_00004 - (dot(vector_00004, vec4_data_array[0]) * vec4_data_array[0])) * dot(vector, vec4_data_array[0]));\n}");
+        assert_eq!(&string.wgsl_code[..], "fn proj(vector: vec4<f32>) -> vec4<f32> {\n    var vector_00004: vec4<f32> = ((5.0 + (length((vector - vec4_data_array[1])) - f32_data_array[1])) * ((f32_data_array[1] * normalize((vector - vec4_data_array[1]))) + vec4_data_array[1]));\n    return ((vector_00004 - (dot(vector_00004, vec4_data_array[0]) * vec4_data_array[0])) * dot(vector, vec4_data_array[0]));\n}");
     }
 }

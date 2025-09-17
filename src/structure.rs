@@ -58,7 +58,7 @@ impl TryFromRonValue for Structure {
     fn try_from_ron_value(value: Value, env: &Environment) -> ron::Result<Self, FromRonError> {
         let Value::Map(mut map) = value else { return Err(FromRonError::NotMap(value)) };
         let Some(Value::String(name)) = map.remove(
-            &Value::String("__struct_name".to_string())
+            &Value::String("_struct_name".to_string())
         ) else { return Err(FromRonError::StructNameNotFound(map)) };
 
         let mut fields = Vec::new();
@@ -108,7 +108,7 @@ impl TryFromRonValue for Field {
                 }
             },
             Value::Map(m) => {
-                if Some(&Value::String("Expr".to_string())) != m.get("__struct_name") {
+                if Some(&Value::String("Expr".to_string())) != m.get("_struct_name") {
                     Ok(Self::Structure(Box::new(Structure::try_from_ron_value(Value::Map(m), env)?)))
 
                 } else if let Some(Value::String(expr)) = m.get("expr") {
@@ -200,7 +200,6 @@ impl TryFromRonValue for Mat4 {
     }
 }
 
-
 pub fn ron_preprocess(string: String) -> String {
     lazy_static! {
         static ref EXPR_NAME_MATCH: Regex = Regex::new(r"Expr\(").unwrap();
@@ -210,9 +209,9 @@ pub fn ron_preprocess(string: String) -> String {
     STRUCT_NAME_MATCH.replace_all(
         EXPR_NAME_MATCH.replace_all(
             string.as_str(),
-            "(__struct_name: \"Expr\", expr: "
+            "(_struct_name: \"Expr\", expr: "
         ).as_ref(),
-        "(__struct_name: \"$1\","
+        "(_struct_name: \"$1\","
     ).to_string()
 }
 
