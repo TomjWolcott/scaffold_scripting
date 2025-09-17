@@ -882,7 +882,7 @@ impl Block {
 
                             block.0.splice(i..i, new_stmts);
                         } else if let Stmt::Assign(Lvalue::TupleDestructure(_), _) = &block.0[i] {
-                            let tuple_name = "____tuple".to_string();
+                            let tuple_name = INSERTED_TUPLE_NAME.to_string();
 
                             let Stmt::Assign(lvalue, expr) = block.0.remove(i) else { unreachable!() };
                             let mut destructure_stack: Vec<(_, Expr)> = vec![(lvalue, ExprInner::Var(tuple_name.clone(), Type::Auto).into())];
