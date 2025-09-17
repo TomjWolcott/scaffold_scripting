@@ -968,7 +968,7 @@ pub struct Constant(Binding, Expr);
 
 impl Parse for Vec<Constant> {
     fn parse(pair: Pair<Rule>, env: &Environment, script: &Arc<SslScript>) -> Result<Self, ParseError> {
-        let tuple_ident = gen_ident("____tuple");
+        let tuple_ident = gen_ident("_tuple");
 
         assert_rule!(pair, constant);
         let mut pairs = pair.into_inner();
