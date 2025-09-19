@@ -1,17 +1,23 @@
+use std::cell::LazyCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use anyhow::{anyhow, bail, Context, Result as AnyResult};
+use glam::Vec4;
+use lazy_static::lazy::Lazy;
 use crate::enviroment::{Environment, EnvironmentFunction, SslCallableFn, SslCallableFnObj};
-use crate::parser::{parse_document, parse_fn, Binding, Block, Expr, ExprInner, Function, Lit, Lvalue, LvalueDeclare, Stmt, Type};
+use crate::parser::{parse_block, parse_document, parse_fn, Binding, Block, Expr, ExprInner, Function, Lit, Lvalue, LvalueDeclare, LvalueField, Method, Stmt, Type};
 use crate::prelude::Scope;
 use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use crate::assemble::AssembledStructure;
 use crate::ast_operations::AssignTypes;
-use crate::interpreter::Eval;
+use crate::interpreter::{Eval, IntoArgs};
+use crate::test_helpers::{get_test_stuff, prettify_string};
 
 pub const DUD_FUNCTION: fn(f32) -> f32 = |x| {println!("DUD!!!"); x};
 
 /// This is meant to act as a pseudo-assembly representation of the function
+#[derive(Debug, Clone)]
 pub struct CompiledFn {
     num_registers_needed: usize,
     instructions: Vec<Instruction>,
@@ -19,16 +25,53 @@ pub struct CompiledFn {
     env: CompiledEnv
 }
 
+impl CompiledFn {
+    pub fn pretty_print(&self, num_tabs: usize) -> String {
+        const TAB: &'static str = "  ";
+        format!(
+            "{}CompiledFn {{ \n{}registers ({}): [ {}],\n{}instructions: {},\n{}output: {}\n{}}}",
+            TAB.repeat(num_tabs),
+
+            TAB.repeat(num_tabs+1),
+            self.num_registers_needed,
+            &"- ".repeat(self.num_registers_needed),
+
+            TAB.repeat(num_tabs+1),
+            self.instructions.iter().enumerate().map(|(i, instr)| {
+                format!("\n{}[{i:0>4}]: {}", TAB.repeat(num_tabs + 2), instr.pretty_print(&self.env))
+            }).collect::<Vec<_>>().join(""),
+
+            TAB.repeat(num_tabs+1),
+            self.output,
+
+
+            TAB.repeat(num_tabs),
+        )
+    }
+}
+
 impl Display for CompiledFn {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "#Registers: {}\n[{}]\n\nInstructions:{}",
+            "#Registers: {} [ {}]\nInstructions:{}\n",
             self.num_registers_needed,
-            &", - ".repeat(self.num_registers_needed)[1..],
+            &"- ".repeat(self.num_registers_needed),
             self.instructions.iter().enumerate()
                 .map(|(i, instr)| format!("\n  [{i:0>4}]: {instr}")).collect::<Vec<_>>().join("")
         )
+    }
+}
+
+impl AssembledStructure {
+    pub fn eval_compiled_method<OUT: TryFrom<Lit, Error=anyhow::Error>>(
+        &self, method_name: impl AsRef<str>, args: impl IntoArgs
+    ) -> AnyResult<OUT> {
+        let method = self.compiled_fns.get(&method_name.as_ref().to_string())
+            .ok_or(anyhow!("Could not find compiled method with name: {:?}", method_name.as_ref()))?;
+        let mut inputs: Vec<Lit> = self.evaluated_scope.iter().map(|(_, lit)| lit.clone()).collect();
+        inputs.append(&mut args.into_args());
+        method.call(inputs).try_into()
     }
 }
 
@@ -53,7 +96,7 @@ impl SslCallableFn for CompiledFn {
         // println!();
         // println!("{}[{}]", " ".repeat(40), registers.iter().map(|r| format!("{:^7}", r.to_string())).collect::<Vec<_>>().join(", "));
         while i < self.instructions.len() {
-            println!("{:<40}", format!("Instruction #{i}: {}", self.instructions[i]));
+            println!("{:<40}", format!("Instruction #{i}: {}", self.instructions[i].pretty_print(&self.env)));
             match &self.instructions[i] {
                 Instruction::Assign { output_register: output_index, function_index, input_registers: input_indices } => {
                     let mut inputs = Vec::with_capacity(input_indices.len());
@@ -86,6 +129,35 @@ impl SslCallableFn for CompiledFn {
                 Instruction::Jump { instruction_index } => {
                     i = *instruction_index;
                 }
+                Instruction::CreateTuple { element_registers, output_register } => {
+                    registers[*output_register] = Lit::Tuple(element_registers.iter().map(|reg| registers[*reg].clone()).collect());
+
+                    i += 1;
+                }
+                Instruction::TupleGet { output_register, tuple_register, index } => {
+                    let Lit::Tuple(elements) = &registers[*tuple_register] else {
+                        panic!("Expected tuple in register {}", tuple_register);
+                    };
+
+                    let Some(element) = elements.get(*index).cloned() else {
+                        panic!("Tuple in register {} does not have index {}", tuple_register, index);
+                    };
+
+                    registers[*output_register] = element;
+
+                    i += 1;
+                }
+                Instruction::TupleSet { tuple_register, index, set_register } => {
+                    let element = registers[*set_register].clone();
+
+                    let Lit::Tuple(elements) = &mut registers[*tuple_register] else {
+                        panic!("Expected tuple in register {}", tuple_register);
+                    };
+
+                    elements[*index] = element;
+
+                    i += 1;
+                }
                 Instruction::Return { register } => {
                     return std::mem::replace(&mut registers[*register], Lit::Unit);
                 }
@@ -117,13 +189,40 @@ impl SslCallableFn for CompiledFn {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum Instruction {
     Assign { output_register: usize, function_index: usize, input_registers: Vec<usize> },
     Move { output_register: usize, input_register: usize },
     Set { lit: Lit, register: usize },
     JumpCondition { instruction_index: usize, register: usize },
     Jump { instruction_index: usize },
+    CreateTuple { output_register: usize, element_registers: Vec<usize> },
+    TupleGet { output_register: usize, tuple_register: usize, index: usize },
+    TupleSet { tuple_register: usize, index: usize, set_register: usize },
     Return { register: usize }
+}
+
+impl Instruction {
+    fn pretty_print(&self, env: &CompiledEnv) -> String {
+        match self {
+            Self::Assign {
+                output_register,
+                function_index,
+                input_registers
+            } => format!(
+                "f{function_index}({}) -> r{output_register} ({})",
+                input_registers.iter().map(|reg| format!("r{reg}")).collect::<Vec<_>>().join(", "),
+                env.0.read().fn_map.iter().find_map(|((_, name, input_types), fn_index)| {
+                    if fn_index == function_index {
+                        Some(format!("{name}({})", input_types.iter().map(|ty| ty.to_string()).collect::<Vec<_>>().join(", ")))
+                    } else {
+                        None
+                    }
+                }).unwrap_or("???".to_string())
+            ),
+            _ => format!("{self}")
+        }
+    }
 }
 
 impl Display for Instruction {
@@ -140,6 +239,9 @@ impl Display for Instruction {
             Instruction::Set { lit, register } => write!(f, "{lit} -> r{register}"),
             Instruction::JumpCondition { instruction_index, register } => write!(f, "If not r{register} goto {instruction_index}"),
             Instruction::Jump { instruction_index } => write!(f, "Goto {instruction_index}"),
+            Instruction::CreateTuple { output_register: output_reg, element_registers: registers } => write!(f, "({}) -> r{output_reg}", registers.iter().map(|reg| format!("r{reg}")).collect::<Vec<_>>().join(", ")),
+            Instruction::TupleGet { output_register, tuple_register, index } => write!(f, "r{tuple_register}.{index} -> r{output_register}"),
+            Instruction::TupleSet { tuple_register, index, set_register } => write!(f, "r{set_register} -> r{tuple_register}.{index}"),
             Instruction::Return { register } => write!(f, "Return r{}", register)
         }
     }
@@ -219,16 +321,47 @@ impl RegistersInUse {
     }
 }
 
+impl Method {
+    pub fn compile(&self, env: &Environment, compiled_env: &CompiledEnv, field_names: &Vec<(String, Type)>) -> AnyResult<CompiledFn> {
+        let mut scope = Scope::new();
+        let mut instructions = Vec::new();
+        let mut registers_in_use = RegistersInUse::new();
+
+        for (field_name, ty) in field_names {
+            let reg = registers_in_use.use_var();
+
+            scope.push(field_name.clone(), (reg, ty.clone()));
+        }
+
+        for Binding(name, ty) in self.inputs.iter() {
+            let reg = registers_in_use.use_var();
+
+            scope.push(name.clone(), (reg, ty.clone()));
+        }
+
+        if let Some(reg) = self.body.compile(env, &mut scope, &mut instructions, &mut registers_in_use, compiled_env)? {
+            instructions.push(Instruction::Return { register: reg });
+        }
+
+        Ok(CompiledFn {
+            num_registers_needed: registers_in_use.num_registers(),
+            instructions,
+            output: self.output.clone(),
+            env: compiled_env.clone()
+        })
+    }
+}
+
 impl Function {
     fn compile(&self, env: &Environment, compiled_env: &CompiledEnv) -> AnyResult<CompiledFn> {
         let mut scope = Scope::new();
         let mut instructions = Vec::new();
         let mut registers_in_use = RegistersInUse::new();
 
-        for Binding(name, _) in self.inputs.iter() {
+        for Binding(name, ty) in self.inputs.iter() {
             let reg = registers_in_use.use_var();
 
-            scope.push(name.clone(), reg);
+            scope.push(name.clone(), (reg, ty.clone()));
         }
 
         if let Some(reg) = self.body.compile(env, &mut scope, &mut instructions, &mut registers_in_use, compiled_env)? {
@@ -248,7 +381,7 @@ impl Block {
     fn compile(
         &self,
         env: &Environment,
-        scope: &mut Scope<usize>,
+        scope: &mut Scope<(usize, Type)>,
         instructions: &mut Vec<Instruction>,
         registers_in_use: &mut RegistersInUse,
         compiled_env: &CompiledEnv
@@ -276,14 +409,14 @@ impl Stmt {
     fn compile(
         &self,
         env: &Environment,
-        scope: &mut Scope<usize>,
+        scope: &mut Scope<(usize, Type)>,
         instructions: &mut Vec<Instruction>,
         registers_in_use: &mut RegistersInUse,
         compiled_env: &CompiledEnv
     ) -> AnyResult<()> {
         match self {
             Stmt::Declare(lvalue, expr) => {
-                let LvalueDeclare::Binding(Binding(name, _)) = lvalue else {
+                let LvalueDeclare::Binding(Binding(name, ty)) = lvalue else {
                     return Err(anyhow!("lvalue needs to have been converted to a simple binding by this point"))
                 };
 
@@ -296,60 +429,111 @@ impl Stmt {
                     input_register: input_reg
                 });
 
-                scope.push(name.clone(), input_reg);
+                scope.push(name.clone(), (input_reg, ty.clone()));
             }
             Stmt::Assign(lvalue, expr) => {
+                let input_reg = expr.compile(env, scope, instructions, registers_in_use, compiled_env)?;
+                let name = match lvalue {
+                    Lvalue::Var(name) | Lvalue::Fields(name, _) => name,
+                    _ => panic!("Tuple destructures should have been removed by now")
+                };
+
+                let (var_reg, var_ty) = scope.get(&name)
+                    .context(format!("Could not find var \"{}\" in assign", name))?;
+
                 match lvalue {
                     Lvalue::Var(name) => {
-                        let input_reg = expr.compile(env, scope, instructions, registers_in_use, compiled_env)?;
                         registers_in_use.free_temp(input_reg);
-                        let output_reg = *scope.get(&name)
-                            .context(format!("Could not find var \"{}\" in assign", name))?;
 
                         instructions.push(Instruction::Move {
-                            output_register: output_reg,
+                            output_register: *var_reg,
                             input_register: input_reg
                         });
                     }
-                    Lvalue::Fields(name, fields) => {
-                        // let mut current_reg = *scope.get(&name)
-                        //     .context(format!("Could not find var \"{}\" in field assign", name))?;
-                        //
-                        // for field_name in fields.iter().take(fields.len() - 1) {
-                        //     let output_reg = registers_in_use.use_temp();
-                        //
-                        //     let ty = env.get_var_type(&name, scope)?
-                        //         .context(format!("Could not find var \"{}\" in field assign", name))?;
-                        //     let (_, _, getter, _) = &*env.get_field(field_name, ty)
-                        //         .ok_or(anyhow!("Can't find field"))?;
-                        //
-                        //     let getter_index = compiled_env.0.write().get_or_insert_fn(env.id(), format!("[get]{field_name}"), vec![ty], getter.clone());
-                        //
-                        //     instructions.push(Instruction::Assign {
-                        //         output_register: output_reg,
-                        //         function_index: getter_index,
-                        //         input_registers: vec![current_reg],
-                        //     });
-                        //
-                        //     current_reg = output_reg;
-                        // }
-                        //
-                        // let input_reg = expr.compile(env, scope, instructions, registers_in_use, compiled_env)?;
-                        // registers_in_use.free_temp(input_reg);
-                        //
-                        // let last_field_name = fields.last().unwrap();
-                        // let ty = env.get_var_type(&name, scope)?
-                        //     .context(format!("Could not find var \"{}\" in field assign", name))?;
-                        // let (_, _, _, setter) = &*env.get_field(last_field_name, ty)
-                        //     .ok_or(anyhow!("Can't find field"))?;
-                        //
-                        // let setter_index = compiled_env.0.write().get_or_insert_fn(env.id(), format!("[set]{last_field_name}"), vec![ty, input_reg.eval_type(env)?], setter.clone());
-                        //
-                        // instructions.push(Instruction::Assign {
-                        //     output_register: current_reg,
-                        //     function_index: setter_index,
-                        //     input_registers: vec![current_reg, input_reg],
-                        // });
+                    Lvalue::Fields(_, fields) => {
+                        let mut tys = vec![var_ty.clone()];
+                        let mut registers = vec![*var_reg];
+
+                        for lvalue_field in fields.iter() {
+                            let output_reg = registers_in_use.use_temp();
+
+                            match lvalue_field {
+                                LvalueField::Field(field_name) => {
+                                    let (_, _, getter, _) = &*env.get_field(field_name, tys.last().unwrap().clone())
+                                        .ok_or(anyhow!("Can't find field"))?;
+
+                                    let getter_index = compiled_env.0.write().get_or_insert_fn(
+                                        env.id(),
+                                        format!("[get]{field_name}"),
+                                        vec![tys.last().unwrap().clone()],
+                                        getter.clone()
+                                    );
+
+                                    tys.push(getter.output());
+
+                                    instructions.push(Instruction::Assign {
+                                        output_register: output_reg,
+                                        function_index: getter_index,
+                                        input_registers: vec![*registers.last().unwrap()],
+                                    });
+                                }
+                                LvalueField::TupleAccess(index) => {
+                                    let Type::Tuple(tuple_tys) = tys.last().unwrap().clone() else {
+                                        panic!("Tuple access should only happen on tuples");
+                                    };
+
+                                    tys.push(tuple_tys[*index].clone());
+
+                                    instructions.push(Instruction::TupleGet {
+                                        tuple_register: *registers.last().unwrap(),
+                                        index: *index,
+                                        output_register: output_reg
+                                    })
+                                }
+                            }
+
+                            registers.push(output_reg);
+                        }
+
+                        instructions.push(Instruction::Move {
+                            input_register: input_reg,
+                            output_register: *registers.last().unwrap()
+                        });
+
+                        registers_in_use.free_temp(input_reg);
+
+                        for lvalue_field in fields.iter().rev() {
+                            let (set_reg, set_ty) = (registers.pop().unwrap(), tys.pop().unwrap());
+                            registers_in_use.free_temp(set_reg);
+                            match lvalue_field {
+                                LvalueField::Field(field_name) => {
+                                    let (_, _, _, setter) = &*env.get_field(field_name, tys.last().unwrap().clone())
+                                        .ok_or(anyhow!("Can't find field"))?;
+
+                                    let setter_index = compiled_env.0.write().get_or_insert_fn(
+                                        env.id(),
+                                        format!("[set]{field_name}"),
+                                        vec![tys.last().unwrap().clone(), set_ty],
+                                        setter.clone()
+                                    );
+
+                                    instructions.push(Instruction::Assign {
+                                        output_register: *registers.last().unwrap(),
+                                        function_index: setter_index,
+                                        input_registers: vec![*registers.last().unwrap(), set_reg],
+                                    });
+                                }
+                                LvalueField::TupleAccess(index) => {
+                                    instructions.push(Instruction::TupleSet {
+                                        tuple_register: *registers.last().unwrap(),
+                                        index: *index,
+                                        set_register: set_reg,
+                                    })
+                                }
+                            }
+                        }
+
+                        registers_in_use.free_temp(*registers.last().unwrap());
                     }
                     Lvalue::TupleDestructure(_) => { panic!("Tuple destructures should have been removed by now") }
                 }
@@ -417,7 +601,7 @@ impl Expr {
     fn compile(
         &self,
         env: &Environment,
-        scope: &Scope<usize>,
+        scope: &Scope<(usize, Type)>,
         instructions: &mut Vec<Instruction>,
         registers_in_use: &mut RegistersInUse,
         compiled_env: &CompiledEnv
@@ -430,7 +614,7 @@ impl ExprInner {
     fn compile(
         &self,
         env: &Environment,
-        scope: &Scope<usize>,
+        scope: &Scope<(usize, Type)>,
         instructions: &mut Vec<Instruction>,
         registers_in_use: &mut RegistersInUse,
         compiled_env: &CompiledEnv
@@ -540,14 +724,36 @@ impl ExprInner {
                 Ok(output_reg)
             }
             ExprInner::TupleAccess(expr, tuple_index) => {
-                // TODO: Something special for these two
+                let reg = expr.0.compile(env, scope, instructions, registers_in_use, compiled_env)?;
+                registers_in_use.free_temp(reg);
 
-                Err(anyhow!("Not yet implemented"))
+                let output_reg = registers_in_use.use_temp();
+
+                instructions.push(Instruction::TupleGet {
+                    output_register: output_reg,
+                    tuple_register: reg,
+                    index: *tuple_index,
+                });
+
+                Ok(output_reg)
             }
             ExprInner::Tuple(exprs) => {
-                // TODO: Something special for these two
+                let regs = exprs.iter().map(|expr| {
+                    expr.compile(env, scope, instructions, registers_in_use, compiled_env)
+                }).collect::<AnyResult<Vec<_>>>()?;
 
-                Err(anyhow!("Not yet implemented"))
+                for reg in regs.iter() {
+                    registers_in_use.free_temp(*reg);
+                }
+
+                let output_reg = registers_in_use.use_temp();
+
+                instructions.push(Instruction::CreateTuple {
+                    element_registers: regs,
+                    output_register: output_reg,
+                });
+
+                Ok(output_reg)
             }
             ExprInner::Var(name, _) => {
                 if let Some((_, lit)) = env.get_env_const(name).as_deref().as_ref() {
@@ -562,7 +768,7 @@ impl ExprInner {
                 } else {
                     scope.get(name)
                         .context(format!("Could not find {} in register scope", name))
-                        .cloned()
+                        .cloned().map(|(reg, _)| reg)
                 }
             }
             ExprInner::Lit(lit) => {
@@ -585,7 +791,7 @@ impl ExprInner {
 pub struct CompiledEnv(Arc<RwLock<CompiledEnvInner>>);
 
 impl CompiledEnv {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(Arc::new(RwLock::new(CompiledEnvInner {
             fn_map: HashMap::new(),
             // const_map: HashMap::new(),
@@ -660,9 +866,9 @@ impl CompiledEnvInner {
 fn test_compilation() {
     let mut script =
         r#"fn abc(x: f32) -> f32 {
-            let v = vec4(1, x, 2, x*3);
-
-            (v * 2).y + (v + vec4(PI, 1, 1, 1)).w
+            let v = (1, 1, ((0, 0, 0, vec4(1, x, 2, x*3)), 2));
+            v.2.0.3.z = 50;
+            v.2.0.3.z
         }"#;
 
     let mut env = Environment::new();
@@ -673,8 +879,41 @@ fn test_compilation() {
     function.assign_types(&env).unwrap();
     let compiled_env = CompiledEnv::new();
     let compiled_fn = function.compile(&env, &compiled_env).unwrap();
-    println!("CompiledEnv:\n{compiled_env:#?}\nCompiledFn:\n{compiled_fn}");
+    println!("CompiledEnv:\n{compiled_env:#?}\nCompiledFn:\n{}", compiled_fn.pretty_print(1));
     let output = compiled_fn.call1(Lit::F32(5.0));
 
     println!("output: {output}");
+}
+
+#[test]
+fn try_eval_block_tuple_compl() {
+    let env = Environment::new();
+    let block = parse_block(r#"{
+            let a = (2, 2, vec4(1, 2, 3, 4), (1, (vec4(5, 6, 7, 8), 1)));
+            a.0 = 4;
+            a.2.z = 100;
+            a.3.1.0.w = 2 - 5;
+            a.1 = (((a.3).1).0).z;
+            a
+        }"#, &env).unwrap();
+
+    let a = block.eval(&mut Scope::new(), &env).unwrap();
+
+    println!("a: {a}");
+}
+
+#[test]
+fn try_eval_compl() {
+    let (env, document, structure) = get_test_stuff(0, 1);
+    println!("Document: {document}\nStructure: {structure}");
+
+    let compiled_env = CompiledEnv::new();
+    let mut assembled_structure = AssembledStructure::new(&document, structure, &env, &compiled_env).unwrap();
+    assembled_structure.evaluate_fields(Scope::new()).unwrap();
+
+    // println!("Assembled Structure: {}", prettify_string(format!("{assembled_structure}")));
+
+    let interpret = assembled_structure.eval_method::<Vec4>("proj", 5.0 * Vec4::X + Vec4::Y).unwrap();
+    let compiled  = assembled_structure.eval_compiled_method::<Vec4>("proj", 5.0 * Vec4::X + Vec4::Y).unwrap();
+    println!("result: {interpret} vs. {compiled}", )
 }

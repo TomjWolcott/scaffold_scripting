@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 use crate::parser::{Binding, Bound, Document, Expr, ExprInner, Instance, KeyVal, Lit, LvalueDeclare, Method, MethodKey, Stmt, Type, Value as ParseValue};
@@ -12,6 +13,7 @@ use crate::scope::Scope;
 
 #[cfg(feature="bevy_tracing")]
 use bevy::log::info_span;
+use crate::compiler::{CompiledEnv, CompiledFn};
 
 const FIELD_PREFIX: &'static str = "_f__";
 
@@ -158,6 +160,7 @@ pub struct AssembledStructure {
     pub(crate) fields: Vec<(String, Expr)>,
     pub evaluated_scope: Scope<Lit>,
     pub(crate) methods: Vec<Method>,
+    pub(crate) compiled_fns: HashMap<String, CompiledFn>,
     pub env: Environment
 }
 
@@ -167,19 +170,20 @@ impl AssembledStructure {
             env: Environment::new(),
             fields: Vec::new(),
             evaluated_scope: Scope::new(),
+            compiled_fns: HashMap::new(),
             methods: Vec::new()
         }
     }
 
-    pub fn new_from_ron(document: &Document, ron: impl AsRef<str>, env: &Environment) -> AnyResult<Self> {
-        Self::new(document, Structure::from_ron_string(ron.as_ref(), env)?, env)
+    pub fn new_from_ron(document: &Document, ron: impl AsRef<str>, env: &Environment, compiled_env: &CompiledEnv) -> AnyResult<Self> {
+        Self::new(document, Structure::from_ron_string(ron.as_ref(), env)?, env, compiled_env)
     }
 
-    pub fn new_from_value(document: &Document, ron: Value, env: &Environment) -> AnyResult<Self> {
-        Self::new(document, Structure::try_from_ron_value(ron, env)?, env)
+    pub fn new_from_value(document: &Document, ron: Value, env: &Environment, compiled_env: &CompiledEnv) -> AnyResult<Self> {
+        Self::new(document, Structure::try_from_ron_value(ron, env)?, env, compiled_env)
     }
 
-    pub fn new(document: &Document, mut structure: Structure, env: &Environment) -> AnyResult<Self> {
+    pub fn new(document: &Document, mut structure: Structure, env: &Environment, compiled_env: &CompiledEnv) -> AnyResult<Self> {
         let mut fields = Vec::new();
 
         if let Ok(instance_structure) = structure.get_instance_structure(document) {
@@ -190,11 +194,22 @@ impl AssembledStructure {
         let methods = structure.assemble_methods(document, env)?;
         fields.append(&mut structure.assemble_fields()?);
 
+        let field_names = fields.iter().map(|(field_name, expr)| {
+            Ok((field_name.clone(), expr.eval_type(env)?))
+        }).collect::<AnyResult<Vec<_>>>()?;
+        let compiled_fns = methods.iter()
+            .try_fold::<_, _, AnyResult<_>>(HashMap::new(), |mut map, method| {
+                map.insert(method.name.clone(), method.compile(&env, compiled_env, &field_names)?);
+
+                Ok(map)
+            })?;
+
         Ok(Self {
             env: env.clone(),
             fields,
             evaluated_scope: Scope::new(),
-            methods
+            methods,
+            compiled_fns,
         })
     }
 
@@ -236,12 +251,18 @@ impl Display for AssembledStructure {
 
         //evaluated scope
 
-        write!(f, " }} Evaluated Scope: {}", self.evaluated_scope)?;
+        write!(f, " }} Evaluated Scope: {:?}", self.evaluated_scope)?;
 
         write!(f, " Methods: {{ ")?;
 
         for method in self.methods.iter() {
             write!(f, "{}, ", method)?;
+        }
+
+        write!(f, " }} Compiled Fns: {{ ")?;
+
+        for (name, compiled_fn) in self.compiled_fns.iter() {
+            write!(f, "{name}: {}, ", compiled_fn)?;
         }
 
         write!(f, " }}")
@@ -251,6 +272,7 @@ impl Display for AssembledStructure {
 #[cfg(test)]
 mod tests {
     use crate::assemble::AssembledStructure;
+    use crate::compiler::CompiledEnv;
     use crate::parser::{Lit, MethodKey};
     use crate::scope::Scope;
     use crate::test_helpers;
@@ -267,7 +289,8 @@ mod tests {
             MethodKey::new(Some("Proj"), "proj")
         ).unwrap();
 
-        let assembled_structure = AssembledStructure::new(&document, structure, &env).unwrap();
+        let compiled_env = CompiledEnv::new();
+        let assembled_structure = AssembledStructure::new(&document, structure, &env, &compiled_env).unwrap();
 
         println!("Assembled Method: {}\nAssembled Structure: {}", prettify_string(format!("{assembled_method}")), prettify_string(format!("{assembled_structure}")));
     }
@@ -277,12 +300,13 @@ mod tests {
         let (env, document, structure) = test_helpers::get_test_stuff(0, 2);
         println!("Document: {document}\nStructure: {structure}");
 
-        let mut assembled_structure = AssembledStructure::new(&document, structure, &env).unwrap();
+        let compiled_env = CompiledEnv::new();
+        let mut assembled_structure = AssembledStructure::new(&document, structure, &env, &compiled_env).unwrap();
 
-        println!("Assembled not pretty: {assembled_structure}\nAssembled Structure: {}", better_prettify(format!("{assembled_structure}")));
-
+        // println!("Assembled not pretty: {assembled_structure}\nAssembled Structure: {}", better_prettify(format!("{assembled_structure}")));
+        //
         assembled_structure.evaluate_fields(Scope::from_vars([("abc".to_string(), Lit::F32(1.0))])).unwrap();
 
-        println!("Assembled Structure after fields are evaluated: {}", better_prettify(format!("{assembled_structure}")));
+        println!("Assembled Structure after fields are evaluated: {}", prettify_string(format!("{assembled_structure}")));
     }
 }

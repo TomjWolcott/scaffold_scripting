@@ -323,6 +323,7 @@ impl Lvalue {
 mod tests {
     use crate::assemble::AssembledStructure;
     use crate::ast_operations::AssignTypes;
+    use crate::compiler::CompiledEnv;
     use crate::interpreter::Eval;
     use crate::scope::Scope;
     use super::*;
@@ -360,7 +361,8 @@ mod tests {
     #[test]
     fn test_to_wgsl() {
         let (env, document, structure) = get_test_stuff(0, 2);
-        let assembled_structure = AssembledStructure::new(&document, structure, &env).unwrap();
+        let compiled_env = CompiledEnv::new();
+        let assembled_structure = AssembledStructure::new(&document, structure, &env, &compiled_env).unwrap();
         let method = assembled_structure.get_method("proj").unwrap();
 
         assert_eq!(method.to_wgsl(&mut Vec::new(), &env).unwrap().wgsl_code, "fn proj(vector: vec4) -> vec4 {\n    let vector_00004: vec4 = ((5 + (length((vector - __shape2__shift)) - __shape2____shape__radius)) * ((__shape2____shape__radius * normalize((vector - __shape2__shift))) + __shape2__shift));\n    return ((vector_00004 - (dot(vector_00004, __shape1__normal) * __shape1__normal)) * dot(vector, __shape1__normal));\n}");
@@ -369,7 +371,8 @@ mod tests {
     #[test]
     fn test_to_wgsl_with_data_arrays() {
         let (env, document, structure) = get_test_stuff(0, 2);
-        let assembled_structure = AssembledStructure::new(&document, structure, &env).unwrap();
+        let compiled_env = CompiledEnv::new();
+        let assembled_structure = AssembledStructure::new(&document, structure, &env, &compiled_env).unwrap();
         let method = assembled_structure.get_method("proj").unwrap();
 
         let string = method.to_wgsl(&mut vec![

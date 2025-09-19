@@ -523,6 +523,7 @@ macro_rules! define_eval {
 mod tests {
     use glam::Vec4;
     use crate::assemble::AssembledStructure;
+    use crate::compiler::CompiledEnv;
     use crate::enviroment::Environment;
     use crate::interpreter::Eval;
     use crate::parser::{parse_block, parse_document};
@@ -605,7 +606,8 @@ mod tests {
         let (env, document, structure) = get_test_stuff(0, 1);
         println!("Document: {document}\nStructure: {structure}");
 
-        let assembled_structure = AssembledStructure::new(&document, structure, &env).unwrap();
+        let compiled_env = CompiledEnv::new();
+        let assembled_structure = AssembledStructure::new(&document, structure, &env, &compiled_env).unwrap();
 
         println!("Assembled Structure: {}", prettify_string(format!("{assembled_structure}")));
 

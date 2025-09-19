@@ -163,12 +163,12 @@ pub fn better_prettify(mut string: String) -> String {
     while i < string.len() {
         match &string[i..i+1] {
             "(" => delimiter_stack.push('('),
-            "[" => delimiter_stack.push('['),
+            // "[" => delimiter_stack.push('['),
             "{" => {
                 tabs += 1;
                 delimiter_stack.push('{')
             },
-            ")" | "]" => { delimiter_stack.pop(); },
+            ")" => { delimiter_stack.pop(); },
             "}" => {
                 delimiter_stack.pop();
                 tabs -= 1;

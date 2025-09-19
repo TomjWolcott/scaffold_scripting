@@ -2,9 +2,9 @@ use std::fmt::Display;
 use crate::parser::{Binding, Type};
 
 #[derive(Debug, Clone)]
-pub struct Scope<T: Display + Clone + PartialEq>(Vec<(String, T)>);
+pub struct Scope<T: Clone + PartialEq>(Vec<(String, T)>);
 
-impl<T: Display + Clone + PartialEq> Scope<T> {
+impl<T: Clone + PartialEq> Scope<T> {
     pub fn new() -> Self {
         Self(Vec::new())
     }
@@ -34,19 +34,7 @@ impl<T: Display + Clone + PartialEq> Scope<T> {
     }
 }
 
-impl<T: Display + Clone + PartialEq> Display for Scope<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{{ ")?;
-
-        for (name, field) in self.0.iter() {
-            write!(f, "{}: {}, ", name, field)?;
-        }
-
-        write!(f, " }}")
-    }
-}
-
-impl<T: Display + Clone + PartialEq> Scope<T> {
+impl<T: Clone + PartialEq> Scope<T> {
     pub fn iter(&self) -> ScopeIterator<T> {
         ScopeIterator {
             scope: self,
@@ -61,24 +49,24 @@ impl From<&Vec<Binding>> for Scope<Type> {
     }
 }
 
-impl<T: Display + Clone + PartialEq> From<Vec<(&String, &T)>> for Scope<T> {
+impl<T: Clone + PartialEq> From<Vec<(&String, &T)>> for Scope<T> {
     fn from(value: Vec<(&String, &T)>) -> Self {
         Self(value.into_iter().map(|(name, t)| (name.clone(), t.clone())).collect())
     }
 }
 
-impl<T: Display + Clone + PartialEq> From<Vec<(String, T)>> for Scope<T> {
+impl<T: Clone + PartialEq> From<Vec<(String, T)>> for Scope<T> {
     fn from(value: Vec<(String, T)>) -> Self {
         Self(value)
     }
 }
 
-pub struct ScopeIterator<'a, T: Display + Clone + PartialEq> {
+pub struct ScopeIterator<'a, T: Clone + PartialEq> {
     scope: &'a Scope<T>,
     index: usize
 }
 
-impl<'a, T: Display + Clone + PartialEq> Iterator for ScopeIterator<'a, T> {
+impl<'a, T: Clone + PartialEq> Iterator for ScopeIterator<'a, T> {
     type Item = (&'a String, &'a T);
 
     fn next(&mut self) -> Option<Self::Item> {

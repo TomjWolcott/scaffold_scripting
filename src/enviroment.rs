@@ -946,7 +946,7 @@ impl SslType for bool {
     }
 
     fn from_lit(lit: Lit) -> Self {
-        match lit { Lit::Bool(v) => v, _ => panic!() }
+        match lit { Lit::Bool(v) => v, _ => panic!("Expected bool, found {lit:?}") }
     }
 }
 
@@ -960,7 +960,7 @@ impl SslType for f32 {
     }
 
     fn from_lit(lit: Lit) -> Self {
-        match lit { Lit::F32(v) => v, _ => panic!() }
+        match lit { Lit::F32(v) => v, _ => panic!("Expected f32, found {lit:?}") }
     }
 }
 
@@ -974,7 +974,7 @@ impl SslType for Vec4 {
     }
 
     fn from_lit(lit: Lit) -> Self {
-        match lit { Lit::Vec4(v) => v, _ => panic!() }
+        match lit { Lit::Vec4(v) => v, _ => panic!("Expected Vec4, found {lit:?}") }
     }
 }
 
@@ -988,7 +988,7 @@ impl SslType for Mat4 {
     }
 
     fn from_lit(lit: Lit) -> Self {
-        match lit { Lit::Mat4x4(v) => v, _ => panic!() }
+        match lit { Lit::Mat4x4(v) => v, _ => panic!("Expected Mat4, found {lit:?}") }
     }
 }
 
