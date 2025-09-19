@@ -791,7 +791,7 @@ impl ExprInner {
 pub struct CompiledEnv(Arc<RwLock<CompiledEnvInner>>);
 
 impl CompiledEnv {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self(Arc::new(RwLock::new(CompiledEnvInner {
             fn_map: HashMap::new(),
             // const_map: HashMap::new(),
