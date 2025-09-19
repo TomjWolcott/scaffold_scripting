@@ -26,4 +26,5 @@ pub mod prelude {
     pub use crate::any_value::*;
     pub use crate::scope::*;
     pub use crate::parser_span::*;
+    pub use crate::compiler::*;
 }
