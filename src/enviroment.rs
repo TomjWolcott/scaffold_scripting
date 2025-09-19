@@ -273,6 +273,11 @@ static GLOBAL_ENV: Lazy<Environment> = Lazy::new(|| {
     env.register_fn(|v: Vec4| v.map(f32::trunc), "trunc".into()).unwrap();
 
 
+    env.register_fn(|f: f32, t: f32, b: bool| if b { t } else { f }, "select".into()).unwrap();
+    env.register_fn(|f: Vec4, t: Vec4, b: bool| if b { t } else { f }, "select".into()).unwrap();
+    env.register_fn(|f: Mat4, t: Mat4, b: bool| if b { t } else { f }, "select".into()).unwrap();
+
+
     env.register_field(|v: Vec4| v.x, |mut v: Vec4, n: f32| {v.x = n; v}, "x".into(), None).unwrap();
     env.register_field(|v: Vec4| v.y, |mut v: Vec4, n: f32| {v.y = n; v}, "y".into(), None).unwrap();
     env.register_field(|v: Vec4| v.z, |mut v: Vec4, n: f32| {v.z = n; v}, "z".into(), None).unwrap();
