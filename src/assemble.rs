@@ -51,6 +51,20 @@ impl Structure {
         let class = document.get_class(&self.name)
             .with_context(|| format!("Couldn't find class {}", self.name))?;
 
+        if class.fields.len() > self.fields.len() {
+            return Err(anyhow!(
+                "Could not find missing fields [{}] in class {}",
+                class.fields.iter().filter_map(|Binding(name, _)| {
+                    if self.fields.iter().all(|(field_name, _)| field_name != name) {
+                        Some(format!("{name:?}"))
+                    } else {
+                        None
+                    }
+                }).collect::<Vec<_>>().join(", "),
+                class.name
+            ));
+        }
+
         for (field_name, field) in self.fields {
             match field {
                 Field::Expr(expr) => {
