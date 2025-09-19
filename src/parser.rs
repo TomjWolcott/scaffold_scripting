@@ -171,7 +171,7 @@ impl Document {
 
         while i > 0 || something_changed_last_cycle {
             let (flag, item) = &mut document_items[i];
-            println!("something_changed: {something_changed_last_cycle}, flag: {flag}, item: {item:?}");
+            // println!("something_changed: {something_changed_last_cycle}, flag: {flag}, item: {item:?}");
 
             if i == 0 {
                 something_changed_last_cycle = false;

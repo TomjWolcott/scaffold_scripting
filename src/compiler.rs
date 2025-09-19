@@ -96,7 +96,7 @@ impl SslCallableFn for CompiledFn {
         // println!();
         // println!("{}[{}]", " ".repeat(40), registers.iter().map(|r| format!("{:^7}", r.to_string())).collect::<Vec<_>>().join(", "));
         while i < self.instructions.len() {
-            println!("{:<40}", format!("Instruction #{i}: {}", self.instructions[i].pretty_print(&self.env)));
+            // println!("{:<40}", format!("Instruction #{i}: {}", self.instructions[i].pretty_print(&self.env)));
             match &self.instructions[i] {
                 Instruction::Assign { output_register: output_index, function_index, input_registers: input_indices } => {
                     let mut inputs = Vec::with_capacity(input_indices.len());
@@ -163,7 +163,7 @@ impl SslCallableFn for CompiledFn {
                 }
             }
 
-            println!("[{}]", registers.iter().map(|r| format!("{}", r.to_string())).collect::<Vec<_>>().join(", "));
+            // println!("[{}]", registers.iter().map(|r| format!("{}", r.to_string())).collect::<Vec<_>>().join(", "));
         }
 
         Lit::Unit
@@ -868,7 +868,7 @@ fn test_compilation() {
         r#"fn abc(x: f32) -> f32 {
             let v = (1, 1, ((0, 0, 0, vec4(1, x, 2, x*3)), 2));
             v.2.0.3.z = 50;
-            v.2.0.3.z
+            (((v.2).0).3).z
         }"#;
 
     let mut env = Environment::new();
@@ -879,7 +879,7 @@ fn test_compilation() {
     function.assign_types(&env).unwrap();
     let compiled_env = CompiledEnv::new();
     let compiled_fn = function.compile(&env, &compiled_env).unwrap();
-    println!("CompiledEnv:\n{compiled_env:#?}\nCompiledFn:\n{}", compiled_fn.pretty_print(1));
+    // println!("CompiledEnv:\n{compiled_env:#?}\nCompiledFn:\n{}", compiled_fn.pretty_print(1));
     let output = compiled_fn.call1(Lit::F32(5.0));
 
     println!("output: {output}");
@@ -905,7 +905,7 @@ fn try_eval_block_tuple_compl() {
 #[test]
 fn try_eval_compl() {
     let (env, document, structure) = get_test_stuff(0, 1);
-    println!("Document: {document}\nStructure: {structure}");
+    // println!("Document: {document}\nStructure: {structure}");
 
     let compiled_env = CompiledEnv::new();
     let mut assembled_structure = AssembledStructure::new(&document, structure, &env, &compiled_env).unwrap();
