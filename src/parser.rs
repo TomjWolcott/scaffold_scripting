@@ -483,6 +483,12 @@ impl Display for MethodKey {
 }
 
 impl Class {
+    pub fn get_field(&self, name: impl AsRef<str>) -> Option<&Binding> {
+        self.fields.iter().find(
+            |Binding(field_name, _)| field_name.as_str() == name.as_ref()
+        )
+    }
+
     pub fn get_method(&self, key: &MethodKey) -> Option<&Method> {
         self.methods.iter().find(|Method { implementation, name, .. }| {
             implementation == &key.0 && name == &key.1

@@ -46,17 +46,24 @@ impl Structure {
         Structure { name: instance.name.clone(), fields }
     }
 
-    fn assemble_fields(self) -> AnyResult<Vec<(String, Expr)>> {
+    fn assemble_fields(self, document: &Document) -> AnyResult<Vec<(String, Expr, Type)>> {
         let mut fields = Vec::new();
+        let class = document.get_class(&self.name)
+            .with_context(|| format!("Couldn't find class {}", self.name))?;
 
         for (field_name, field) in self.fields {
             match field {
-                Field::Expr(expr) => fields.push((field_name, expr)),
+                Field::Expr(expr) => {
+                    let Some(Binding(_, ty)) = class.get_field(&field_name) else {
+                        return Err(anyhow!("Couldn't find field {} in class {}", field_name, &self.name));
+                    };
+                    fields.push((field_name, expr, ty.clone()))
+                },
                 Field::Structure(structure) => {
-                    let structure_fields = structure.assemble_fields()?;
+                    let structure_fields = structure.assemble_fields(document)?;
 
                     fields.append(&mut structure_fields.into_iter().map(
-                        |(other_field_name, expr)| (format!("{FIELD_PREFIX}{}__{}", field_name, other_field_name), expr)
+                        |(other_field_name, expr, ty)| (format!("{FIELD_PREFIX}{}__{}", field_name, other_field_name), expr, ty)
                     ).collect::<Vec<_>>())
                 }
             }
@@ -157,7 +164,7 @@ impl Structure {
 
 #[derive(Debug, Clone)]
 pub struct AssembledStructure {
-    pub(crate) fields: Vec<(String, Expr)>,
+    pub(crate) fields: Vec<(String, Expr, Type)>,
     pub evaluated_scope: Scope<Lit>,
     pub(crate) methods: Vec<Method>,
     pub(crate) compiled_fns: HashMap<String, CompiledFn>,
@@ -187,15 +194,15 @@ impl AssembledStructure {
         let mut fields = Vec::new();
 
         if let Ok(instance_structure) = structure.get_instance_structure(document) {
-            fields = structure.assemble_fields()?;
+            fields = structure.assemble_fields(document)?;
             structure = instance_structure;
         }
 
         let methods = structure.assemble_methods(document, env)?;
-        fields.append(&mut structure.assemble_fields()?);
+        fields.append(&mut structure.assemble_fields(document)?);
 
-        let field_names = fields.iter().map(|(field_name, expr)| {
-            Ok((field_name.clone(), expr.eval_type(env)?))
+        let field_names = fields.iter().map(|(field_name, _, ty)| {
+            Ok((field_name.clone(), ty.clone()))
         }).collect::<AnyResult<Vec<_>>>()?;
         let compiled_fns = methods.iter()
             .try_fold::<_, _, AnyResult<_>>(HashMap::new(), |mut map, method| {
@@ -218,7 +225,7 @@ impl AssembledStructure {
         let my_span = info_span!("evaluate_fields").entered();
         self.evaluated_scope = Scope::new();
 
-        for (name, expr) in self.fields.iter() {
+        for (name, expr, _ty) in self.fields.iter() {
             let lit = expr.eval(&mut scope, &self.env)?;
             self.evaluated_scope.push(name.clone(), lit.clone());
             scope.push(name.clone(), lit);
@@ -245,7 +252,7 @@ impl Display for AssembledStructure {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "Fields: {{ ")?;
 
-        for (name, expr) in self.fields.iter() {
+        for (name, expr, _ty) in self.fields.iter() {
             write!(f, "{}: {}, ", name, expr)?;
         }
 
