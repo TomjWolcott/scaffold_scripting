@@ -69,8 +69,8 @@ impl AssembledStructure {
     ) -> AnyResult<OUT> {
         let method = self.compiled_fns.get(&method_name.as_ref().to_string())
             .ok_or(anyhow!("Could not find compiled method with name: {:?}", method_name.as_ref()))?;
-        let mut inputs: Vec<Lit> = args.into_args();
-        inputs.append(&mut self.evaluated_scope.iter().map(|(_, lit)| lit.clone()).collect());
+        let mut inputs: Vec<Lit> = self.evaluated_scope.iter().map(|(_, lit)| lit.clone()).collect();
+        inputs.append(&mut args.into_args());
         method.call(inputs).try_into()
     }
 }
@@ -321,8 +321,39 @@ impl RegistersInUse {
     }
 }
 
+impl Method {
+    pub fn compile(&self, env: &Environment, compiled_env: &CompiledEnv, field_names: &Vec<(String, Type)>) -> AnyResult<CompiledFn> {
+        let mut scope = Scope::new();
+        let mut instructions = Vec::new();
+        let mut registers_in_use = RegistersInUse::new();
+
+        for (field_name, ty) in field_names {
+            let reg = registers_in_use.use_var();
+
+            scope.push(field_name.clone(), (reg, ty.clone()));
+        }
+
+        for Binding(name, ty) in self.inputs.iter() {
+            let reg = registers_in_use.use_var();
+
+            scope.push(name.clone(), (reg, ty.clone()));
+        }
+
+        if let Some(reg) = self.body.compile(env, &mut scope, &mut instructions, &mut registers_in_use, compiled_env)? {
+            instructions.push(Instruction::Return { register: reg });
+        }
+
+        Ok(CompiledFn {
+            num_registers_needed: registers_in_use.num_registers(),
+            instructions,
+            output: self.output.clone(),
+            env: compiled_env.clone()
+        })
+    }
+}
+
 impl Function {
-    pub fn compile(&self, env: &Environment, compiled_env: &CompiledEnv) -> AnyResult<CompiledFn> {
+    fn compile(&self, env: &Environment, compiled_env: &CompiledEnv) -> AnyResult<CompiledFn> {
         let mut scope = Scope::new();
         let mut instructions = Vec::new();
         let mut registers_in_use = RegistersInUse::new();

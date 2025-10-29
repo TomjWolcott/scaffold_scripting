@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use crate::parser::{Binding, Bound, Document, Expr, ExprInner, Function, Instance, KeyVal, Lit, LvalueDeclare, Method, MethodKey, Stmt, Type, Value as ParseValue};
+use crate::parser::{Binding, Bound, Document, Expr, ExprInner, Instance, KeyVal, Lit, LvalueDeclare, Method, MethodKey, Stmt, Type, Value as ParseValue};
 use crate::structure::{Field, Structure, TryFromRonValue};
 use crate::tree_walk::{TreeNodeMut, WalkTreeMut};
 use anyhow::{anyhow, Context, Result as AnyResult};
@@ -180,7 +180,7 @@ impl Structure {
 pub struct AssembledStructure {
     pub(crate) fields: Vec<(String, Expr, Type)>,
     pub evaluated_scope: Scope<Lit>,
-    pub(crate) assembled_fns: Vec<Function>,
+    pub(crate) methods: Vec<Method>,
     pub(crate) compiled_fns: HashMap<String, CompiledFn>,
     pub env: Environment
 }
@@ -192,7 +192,7 @@ impl AssembledStructure {
             fields: Vec::new(),
             evaluated_scope: Scope::new(),
             compiled_fns: HashMap::new(),
-            assembled_fns: Vec::new()
+            methods: Vec::new()
         }
     }
 
@@ -212,22 +212,15 @@ impl AssembledStructure {
             structure = instance_structure;
         }
 
-        let mut methods = structure.assemble_methods(document, env)?;
+        let methods = structure.assemble_methods(document, env)?;
         fields.append(&mut structure.assemble_fields(document)?);
 
-        let assembled_fns = methods.into_iter()
-            .map(|Method { name, implementation, bounds, inputs, output, body }| {
-                Function {
-                    name,
-                    inputs: inputs.into_iter().chain(fields.iter().map(|(name, _, ty)| Binding(name.clone(), ty.clone()))).collect(),
-                    output,
-                    body,
-                }
-            }).collect::<Vec<_>>();
-
-        let compiled_fns = assembled_fns.iter()
-            .try_fold::<_, _, AnyResult<_>>(HashMap::new(), |mut map, assembled_fns| {
-                map.insert(assembled_fns.name.clone(), assembled_fns.compile(&env, compiled_env)?);
+        let field_names = fields.iter().map(|(field_name, _, ty)| {
+            Ok((field_name.clone(), ty.clone()))
+        }).collect::<AnyResult<Vec<_>>>()?;
+        let compiled_fns = methods.iter()
+            .try_fold::<_, _, AnyResult<_>>(HashMap::new(), |mut map, method| {
+                map.insert(method.name.clone(), method.compile(&env, compiled_env, &field_names)?);
 
                 Ok(map)
             })?;
@@ -236,7 +229,7 @@ impl AssembledStructure {
             env: env.clone(),
             fields,
             evaluated_scope: Scope::new(),
-            assembled_fns,
+            methods,
             compiled_fns,
         })
     }
@@ -255,21 +248,17 @@ impl AssembledStructure {
         Ok(())
     }
 
-    pub(crate) fn get_assembled_fn(&self, name: impl AsRef<str>) -> Option<&Function> {
+    pub fn get_method(&self, name: impl AsRef<str>) -> Option<&Method> {
         #[cfg(feature="bevy_tracing")]
         let my_span = info_span!("get_method").entered();
-        self.assembled_fns.iter().find(|assembled_fn| assembled_fn.name.as_str() == name.as_ref())
+        self.methods.iter().find(|method| method.name.as_str() == name.as_ref())
     }
 
     // TODO: Move away from using fn names, should be able to just say "does xyz implement trait?"
-    pub fn has_assembled_fns<'a>(&self, methods: impl IntoIterator<Item=&'a str>) -> bool {
+    pub fn has_methods<'a>(&self, methods: impl IntoIterator<Item=&'a str>) -> bool {
         methods.into_iter().all(|method_name| {
-            self.get_assembled_fn(method_name).is_some()
+            self.get_method(method_name).is_some()
         })
-    }
-
-    pub fn to_assembled_string(&self) -> String {
-        format!("AssembledStructure {{{}\n}}", self.evaluated_scope.iter().map(|(name, lit)| format!("\n    {name}: {lit},")).collect::<String>())
     }
 }
 
@@ -287,7 +276,7 @@ impl Display for AssembledStructure {
 
         write!(f, " Methods: {{ ")?;
 
-        for method in self.assembled_fns.iter() {
+        for method in self.methods.iter() {
             write!(f, "{}, ", method)?;
         }
 

@@ -363,7 +363,7 @@ mod tests {
         let (env, document, structure) = get_test_stuff(0, 2);
         let compiled_env = CompiledEnv::new();
         let assembled_structure = AssembledStructure::new(&document, structure, &env, &compiled_env).unwrap();
-        let method = assembled_structure.get_assembled_fn("proj").unwrap();
+        let method = assembled_structure.get_method("proj").unwrap();
 
         assert_eq!(method.to_wgsl(&mut Vec::new(), &env).unwrap().wgsl_code, "fn proj(vector: vec4) -> vec4 {\n    let vector_00004: vec4 = ((5 + (length((vector - __shape2__shift)) - __shape2____shape__radius)) * ((__shape2____shape__radius * normalize((vector - __shape2__shift))) + __shape2__shift));\n    return ((vector_00004 - (dot(vector_00004, __shape1__normal) * __shape1__normal)) * dot(vector, __shape1__normal));\n}");
     }
@@ -373,11 +373,14 @@ mod tests {
         let (env, document, structure) = get_test_stuff(0, 2);
         let compiled_env = CompiledEnv::new();
         let assembled_structure = AssembledStructure::new(&document, structure, &env, &compiled_env).unwrap();
-        let method = assembled_structure.get_assembled_fn("proj").unwrap();
+        let method = assembled_structure.get_method("proj").unwrap();
 
-        let string = method.to_wgsl(&mut vec![], &env).unwrap();
+        let string = method.to_wgsl(&mut vec![
+                    ("_shape2__shift".to_string(), "vec4_data_array[1]".to_string()),
+                    ("_shape1__normal".to_string(), "vec4_data_array[0]".to_string()),
+                    ("_shape2___shape__radius".to_string(), "f32_data_array[1]".to_string()),
+                ], &env).unwrap();
 
-        println!("{}", &string.wgsl_code[..]);
-        // assert_eq!(&string.wgsl_code[..], "fn proj(vector: vec4<f32>) -> vec4<f32> {\n    var vector_00004: vec4<f32> = ((5.0 + (length((vector - vec4_data_array[1])) - f32_data_array[1])) * ((f32_data_array[1] * normalize((vector - vec4_data_array[1]))) + vec4_data_array[1]));\n    return ((vector_00004 - (dot(vector_00004, vec4_data_array[0]) * vec4_data_array[0])) * dot(vector, vec4_data_array[0]));\n}");
+        assert_eq!(&string.wgsl_code[..], "fn proj(vector: vec4<f32>) -> vec4<f32> {\n    var vector_00004: vec4<f32> = ((5.0 + (length((vector - vec4_data_array[1])) - f32_data_array[1])) * ((f32_data_array[1] * normalize((vector - vec4_data_array[1]))) + vec4_data_array[1]));\n    return ((vector_00004 - (dot(vector_00004, vec4_data_array[0]) * vec4_data_array[0])) * dot(vector, vec4_data_array[0]));\n}");
     }
 }
