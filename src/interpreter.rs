@@ -175,7 +175,7 @@ impl AssembledStructure {
         let my_span = info_span!("eval_method", method_name = method_name.as_ref().to_string()).entered();
         /* TODO: It's bad to search for the method every single time, I need to find
                 a way to let the user have it/get it fast.  Perhaps give an index? */
-        let method = self.get_method(&method_name)
+        let method = self.get_assembled_fn(&method_name)
             .with_context(|| format!("Could not find method {}", method_name.as_ref()))?;
 
         let mut scope = self.evaluated_scope.clone();
