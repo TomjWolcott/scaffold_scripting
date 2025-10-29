@@ -260,6 +260,10 @@ impl AssembledStructure {
             self.get_method(method_name).is_some()
         })
     }
+
+    pub fn to_assembled_string(&self) -> String {
+        format!("AssembledStructure {{{}\n}}", self.evaluated_scope.iter().map(|(name, lit)| format!("\n    {name}: {lit},")).collect::<String>())
+    }
 }
 
 impl Display for AssembledStructure {
