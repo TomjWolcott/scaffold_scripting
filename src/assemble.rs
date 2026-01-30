@@ -231,8 +231,6 @@ impl AssembledStructure {
         structure = structure.clone().into_expanded_instance_structures(document)?;
         fields = structure.clone().assemble_fields(document)?;
 
-        println!("structure: {structure}\n\nfields: {fields:?}");
-
         let methods = structure.assemble_methods(document, env)?;
         // fields.append(&mut structure.assemble_fields(document)?);
 
