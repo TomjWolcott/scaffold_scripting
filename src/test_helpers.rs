@@ -94,6 +94,12 @@ pub fn get_test_stuff(opt1: usize, opt2: usize) -> (Environment, Document, Struc
                 radius: Expr("abc * 17 + 4")
             )
         "#,
+        3 => r#"
+            Shift(shift: [1, 2, 3, 4], shape: Combo(
+                shape: Plane4D( normal: [1, 2, 3, 4] ),
+                radius: Expr("abc * 17 + 4")
+            ))
+        "#,
         _ => ""
     };
 

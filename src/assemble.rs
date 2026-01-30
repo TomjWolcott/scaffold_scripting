@@ -18,6 +18,21 @@ use crate::compiler::{CompiledEnv, CompiledFn};
 const FIELD_PREFIX: &'static str = "_f__";
 
 impl Structure {
+    fn into_expanded_instance_structures(mut self, document: &Document) -> AnyResult<Structure> {
+        if let Ok(instance_structure) = self.get_instance_structure(document) {
+            instance_structure.into_expanded_instance_structures(document)
+        } else {
+            for (_name, field) in self.fields.iter_mut() {
+                if let Field::Structure(structure) = field {
+                    let owned_structure = std::mem::replace(structure, Box::new(Structure::empty()));
+                    *structure = Box::new(owned_structure.into_expanded_instance_structures(document)?);
+                }
+            }
+
+            Ok(self)
+        }
+    }
+
     fn get_instance_structure(&self, document: &Document) -> AnyResult<Structure> {
         let class = document.get_class(&self.name)
             .with_context(|| format!("Couldn't find class {}", self.name))?;
@@ -92,11 +107,13 @@ impl Structure {
             .with_context(|| format!("Couldn't find class {}", self.name))?;
 
         for method in class.methods.iter() {
-            methods.push(self.assemble_method(
+            if let Ok(method) = self.assemble_method(
                 document,
                 env,
                 MethodKey::new(method.implementation.as_ref(), &method.name)
-            ).context(format!("Could not assemble method: {}", method.name))?);
+            ) {
+                methods.push(method);
+            }
         }
 
         Ok(methods)
@@ -118,6 +135,10 @@ impl Structure {
     }
 
     fn assemble_method_rec(&self, document: &Document, method_key: MethodKey, id: String, env: &Environment) -> AnyResult<Method> {
+        if let Ok(instance_structure) = self.get_instance_structure(document) {
+            return instance_structure.assemble_method_rec(document, method_key, id, env);
+        }
+
         let mut method = document
             .get_method(&self.name, &method_key)
             .with_context(|| format!("Could not find method: {} in {}", method_key, &self.name))?
@@ -207,13 +228,13 @@ impl AssembledStructure {
     pub fn new(document: &Document, mut structure: Structure, env: &Environment, compiled_env: &CompiledEnv) -> AnyResult<Self> {
         let mut fields = Vec::new();
 
-        if let Ok(instance_structure) = structure.get_instance_structure(document) {
-            fields = structure.assemble_fields(document)?;
-            structure = instance_structure;
-        }
+        structure = structure.clone().into_expanded_instance_structures(document)?;
+        fields = structure.clone().assemble_fields(document)?;
+
+        println!("structure: {structure}\n\nfields: {fields:?}");
 
         let methods = structure.assemble_methods(document, env)?;
-        fields.append(&mut structure.assemble_fields(document)?);
+        // fields.append(&mut structure.assemble_fields(document)?);
 
         let field_names = fields.iter().map(|(field_name, _, ty)| {
             Ok((field_name.clone(), ty.clone()))
@@ -302,6 +323,17 @@ mod tests {
     use crate::scope::Scope;
     use crate::test_helpers;
     use crate::test_helpers::{better_prettify, prettify_string};
+
+    #[test]
+    fn try_assemble() {
+        let (env, document, structure) = test_helpers::get_test_stuff(0, 3);
+        println!("Document: {document}\nStructure: {structure}");
+
+        let compiled_env = CompiledEnv::new();
+        let assembled_structure = AssembledStructure::new(&document, structure, &env, &compiled_env).unwrap();
+
+        println!("Assembled Structure: {}", prettify_string(format!("{assembled_structure}")));
+    }
 
     #[test]
     fn try_assemble_method() {

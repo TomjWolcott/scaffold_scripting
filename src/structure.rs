@@ -42,6 +42,10 @@ pub struct Structure {
 
 /// Represents the structure of a shape as read from RON
 impl Structure {
+    pub fn empty() -> Self {
+        Self { name: "".to_string(), fields: vec![] }
+    }
+    
     pub fn get_field(&self, name: impl AsRef<str>) -> Option<&Field> {
         self.fields.iter()
             .find(|(field_name, _)| field_name.as_str() == name.as_ref())
