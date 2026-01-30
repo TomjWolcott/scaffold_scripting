@@ -16,90 +16,136 @@ use bevy::log::info_span;
 use crate::compiler::{CompiledEnv, CompiledFn};
 
 const FIELD_PREFIX: &'static str = "_f__";
+const INSTANCE_PREFIX: &'static str = "_i__";
 
 impl Structure {
-    fn into_expanded_instance_structures(mut self, document: &Document) -> AnyResult<Structure> {
-        if let Ok(instance_structure) = self.get_instance_structure(document) {
-            instance_structure.into_expanded_instance_structures(document)
-        } else {
-            for (_name, field) in self.fields.iter_mut() {
-                if let Field::Structure(structure) = field {
-                    let owned_structure = std::mem::replace(structure, Box::new(Structure::empty()));
-                    *structure = Box::new(owned_structure.into_expanded_instance_structures(document)?);
+    fn into_expanded_instance_structures(mut self, mut id: String, document: &Document) -> AnyResult<(Structure, Vec<(String, Expr, Type)>)> {
+        let mut fields = Vec::new();
+        let mut class = document.get_class(&self.name)
+            .with_context(|| format!("Couldn't find class {}", self.name))?;
+
+        while let Some(instance) = self.get_instance(document) {
+            id = format!("{id}{INSTANCE_PREFIX}{}__", self.name);
+            
+            for (name, field) in self.fields.iter() {
+                if let Field::Expr(expr) = field {
+                    let Some(Binding(_, ty)) = class.get_field(&name) else {
+                        return Err(anyhow!("Couldn't find field {} in class {}", name, &self.name));
+                    };
+                    fields.push((format!("{id}{name}"), expr.clone(), ty.clone()))
                 }
             }
 
-            Ok(self)
+            let map = self.fields.iter().fold(HashMap::new(), |mut map, (name, _)| {
+                map.insert(name.clone(), format!("{id}{name}"));
+                map
+            });
+
+            self = self.create_instance(instance, &map);
+            class = document.get_class(&self.name)
+                .with_context(|| format!("Couldn't find class {}", self.name))?;
         }
+
+        for (name, field) in self.fields.iter_mut() {
+            match field {
+                Field::Structure(structure) => {
+                    let owned_structure = std::mem::replace(structure, Box::new(Structure::empty()));
+                    let (expanded_structure, mut expanded_fields) = owned_structure.into_expanded_instance_structures(
+                        format!("{FIELD_PREFIX}{}__", name),
+                        document
+                    )?;
+
+                    *structure = Box::new(expanded_structure);
+                    fields.append(&mut expanded_fields);
+                }
+                Field::Expr(expr) => {
+                    let Some(Binding(_, ty)) = class.get_field(&name) else {
+                        return Err(anyhow!("Couldn't find field {} in class {}", name, &self.name));
+                    };
+
+                    fields.push((format!("{id}{name}"), expr.clone(), ty.clone()))
+                }
+            }
+        }
+
+        Ok((self, fields))
     }
 
-    fn get_instance_structure(&self, document: &Document) -> AnyResult<Structure> {
-        let class = document.get_class(&self.name)
-            .with_context(|| format!("Couldn't find class {}", self.name))?;
+    fn get_instance<'a>(&self, document: &'a Document) -> Option<&'a Instance> {
+        let class = document.get_class(&self.name)?;
 
-        let instance = class.instance.as_ref()
-            .with_context(|| format!("Couldn't find instance on class {}", self.name))?;
-
-        Ok(self.create_instance(instance))
+        class.instance.as_ref()
     }
 
-    fn create_instance(&self, instance: &Instance) -> Structure {
+    fn create_instance(&self, instance: &Instance, var_map: &HashMap<String, String>) -> Structure {
         let fields = instance.key_vals.iter().map(|KeyVal { key, value }| {
             (key.clone(), match value {
                 ParseValue::Expr(Expr(ExprInner::Var(var_name, _), _)) => {
                     if let Some(Field::Structure(structure)) = self.get_field(var_name) {
                         Field::Structure(structure.clone())
                     } else {
+                        let var_name = if var_map.contains_key(var_name) { var_map.get(var_name).unwrap().clone() } else { var_name.clone() };
                         Field::Expr(ExprInner::Var(var_name.clone(), Type::Auto).into())
                     }
                 },
-                ParseValue::Expr(expr) => Field::Expr(expr.clone()),
-                ParseValue::Instance(sub_instance) => Field::Structure(Box::new(self.create_instance(sub_instance)))
+                ParseValue::Expr(expr) => {
+                    let mut expr = expr.clone();
+                    expr.alpha_convert(&mut IdentScope::from(var_map.clone()));
+
+                    Field::Expr(expr)
+                },
+                ParseValue::Instance(sub_instance) => Field::Structure(Box::new(self.create_instance(sub_instance, var_map)))
             })
         }).collect();
 
         Structure { name: instance.name.clone(), fields }
     }
 
-    fn assemble_fields(self, document: &Document) -> AnyResult<Vec<(String, Expr, Type)>> {
-        let mut fields = Vec::new();
-        let class = document.get_class(&self.name)
-            .with_context(|| format!("Couldn't find class {}", self.name))?;
-
-        if class.fields.len() > self.fields.len() {
-            return Err(anyhow!(
-                "Could not find missing fields [{}] in class {}",
-                class.fields.iter().filter_map(|Binding(name, _)| {
-                    if self.fields.iter().all(|(field_name, _)| field_name != name) {
-                        Some(format!("{name:?}"))
-                    } else {
-                        None
-                    }
-                }).collect::<Vec<_>>().join(", "),
-                class.name
-            ));
-        }
-
-        for (field_name, field) in self.fields {
-            match field {
-                Field::Expr(expr) => {
-                    let Some(Binding(_, ty)) = class.get_field(&field_name) else {
-                        return Err(anyhow!("Couldn't find field {} in class {}", field_name, &self.name));
-                    };
-                    fields.push((field_name, expr, ty.clone()))
-                },
-                Field::Structure(structure) => {
-                    let structure_fields = structure.assemble_fields(document)?;
-
-                    fields.append(&mut structure_fields.into_iter().map(
-                        |(other_field_name, expr, ty)| (format!("{FIELD_PREFIX}{}__{}", field_name, other_field_name), expr, ty)
-                    ).collect::<Vec<_>>())
-                }
-            }
-        }
-
-        Ok(fields)
-    }
+    // fn assemble_fields(&self, document: &Document) -> AnyResult<Vec<(String, Expr, Type)>> {
+    //     let mut fields = Vec::new();
+    //     let class = document.get_class(&self.name)
+    //         .with_context(|| format!("Couldn't find class {}", self.name))?;
+    //
+    //     if class.fields.len() > self.fields.len() {
+    //         return Err(anyhow!(
+    //             "Could not find missing fields [{}] in class {}",
+    //             class.fields.iter().filter_map(|Binding(name, _)| {
+    //                 if self.fields.iter().all(|(field_name, _)| field_name != name) {
+    //                     Some(format!("{name:?}"))
+    //                 } else {
+    //                     None
+    //                 }
+    //             }).collect::<Vec<_>>().join(", "),
+    //             class.name
+    //         ));
+    //     }
+    //
+    //     for (field_name, field) in self.fields.iter() {
+    //         match field {
+    //             Field::Expr(expr) => {
+    //                 let Some(Binding(_, ty)) = class.get_field(&field_name) else {
+    //                     return Err(anyhow!("Couldn't find field {} in class {}", field_name, &self.name));
+    //                 };
+    //                 fields.push((field_name.clone(), expr.clone(), ty.clone()))
+    //             },
+    //             Field::Structure(structure) => {
+    //                 let structure_fields = structure.assemble_fields(document)?;
+    //
+    //                 fields.append(&mut structure_fields.iter().map(
+    //                     |(other_field_name, expr, ty)| (format!("{FIELD_PREFIX}{}__{}", field_name, other_field_name), expr.clone(), ty.clone())
+    //                 ).collect::<Vec<_>>())
+    //             }
+    //         }
+    //     }
+    //
+    //     if let Ok(instance_structure) = self.get_instance_structure(document) {
+    //         for (name, expr, ty) in instance_structure.assemble_fields(document)? {
+    //             fields.push((format!("{INSTANCE_PREFIX}{}__{}", self.name, name), expr, ty));
+    //         }
+    //     }
+    //
+    //     Ok(fields)
+    // }
 
     fn assemble_methods(&self, document: &Document, env: &Environment) -> AnyResult<Vec<Method>> {
         let mut methods = Vec::new();
@@ -135,10 +181,6 @@ impl Structure {
     }
 
     fn assemble_method_rec(&self, document: &Document, method_key: MethodKey, id: String, env: &Environment) -> AnyResult<Method> {
-        if let Ok(instance_structure) = self.get_instance_structure(document) {
-            return instance_structure.assemble_method_rec(document, method_key, id, env);
-        }
-
         let mut method = document
             .get_method(&self.name, &method_key)
             .with_context(|| format!("Could not find method: {} in {}", method_key, &self.name))?
@@ -226,10 +268,10 @@ impl AssembledStructure {
     }
 
     pub fn new(document: &Document, mut structure: Structure, env: &Environment, compiled_env: &CompiledEnv) -> AnyResult<Self> {
-        let mut fields = Vec::new();
+        let (expanded_structure, fields) = structure.clone().into_expanded_instance_structures("".to_string(), document)?;
+        structure = expanded_structure;
 
-        structure = structure.clone().into_expanded_instance_structures(document)?;
-        fields = structure.clone().assemble_fields(document)?;
+        // println!("structure: {structure}\n\nfields: {:#?}", fields.iter().map(|(name, expr, ty)| format!("({name}: {expr}  ({ty}))")).collect::<Vec<_>>());
 
         let methods = structure.assemble_methods(document, env)?;
         // fields.append(&mut structure.assemble_fields(document)?);

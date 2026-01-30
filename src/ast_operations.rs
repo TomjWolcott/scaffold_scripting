@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use anyhow::{anyhow, Context, Result as AnyResult};
 use crate::enviroment::Environment;
@@ -216,6 +217,12 @@ impl IdentScope {
         self.0.iter().rev()
             .find(|(other_old_name, _)| other_old_name.as_str() == old_name.as_ref())
             .map(|(_, new_name)| new_name)
+    }
+}
+
+impl From<HashMap<String, String>> for IdentScope {
+    fn from(value: HashMap<String, String>) -> Self {
+        IdentScope(value.into_iter().collect())
     }
 }
 
