@@ -53,6 +53,9 @@ pub fn get_test_stuff(opt1: usize, opt2: usize) -> (Environment, Document, Struc
             shape2: Class,
             Proj::proj<shape1: Proj + Sdf, shape2: Proj + Sdf>(vector: vec4) -> vec4 {
                 shape1.proj((5 + shape2.sdf(vector)) * shape2.proj(vector)) * shape1.sdf(vector)
+            },
+            Sdf::sdf<shape1: Proj + Sdf, shape2: Proj + Sdf>(vector: vec4) -> f32 {
+                1
             }
         }
 
@@ -67,6 +70,37 @@ pub fn get_test_stuff(opt1: usize, opt2: usize) -> (Environment, Document, Struc
             }
         }
     "#,
+        1 => r#"
+        interface ABC {
+            abc(v: vec4) -> vec4
+        }
+        
+        class X {
+            x: f32,
+            ABC::abc(v: vec4) -> vec4 {
+                2 * x * v
+            }
+        }
+        
+        class Y {
+            y: f32,
+            sy: Class,
+            ABC::abc<sy: ABC>(v: vec4) -> vec4 {
+                sy.abc(v) + v / y
+            }
+        }
+        
+        class Z {
+            z: f32,
+            sz: Class
+        } => Y {
+            y: z + 3,
+            sy: Y {
+                y: z - 3,
+                sy: sz
+            }
+        }
+        "#,
         _ => ""
     }.to_string();
 
@@ -99,6 +133,9 @@ pub fn get_test_stuff(opt1: usize, opt2: usize) -> (Environment, Document, Struc
                 shape: Plane4D( normal: [1, 2, 3, 4] ),
                 radius: Expr("abc * 17 + 4")
             )))
+        "#,
+        4 => r#"
+            Z(z: 1, sz: Z(z: 2, sz: Y(y: 3, sy: Z(z: 4, sz: X(x: 5)))))
         "#,
         _ => ""
     };
