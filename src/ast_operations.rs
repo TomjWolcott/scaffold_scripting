@@ -201,7 +201,7 @@ impl AssignTypes for ExprInner {
 
 //   I know I'm doing A LOT of cloning by using Vec, but the scope won't ever really get that big,
 // so I'll put up with it for right now.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct IdentScope(pub Vec<(String, String)>);
 
 impl IdentScope {
